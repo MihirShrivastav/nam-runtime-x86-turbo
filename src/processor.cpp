@@ -81,7 +81,10 @@ struct Processor::Impl
   std::vector<float> model_buf;      // the signal at the model rate (with a converter)
   std::vector<float> scratch_in, scratch_out; // engine_block each: for the second engine during a fade and for replays
 
-  std::vector<float> history;        // the engine input of the last kHistoryCapacity samples, as a ring
+  // The engine input of the last kHistoryCapacity samples, as a ring. The audio thread writes it while a control thread may read it (a
+  // reader checks afterwards that the part it read was not overwritten), so the elements are relaxed atomics: plain reads of memory that is
+  // being written would be a data race. On x86 a relaxed atomic float load or store is an ordinary move.
+  std::vector<std::atomic<float>> history;
   std::atomic<std::uint64_t> history_pos{0}; // number of samples ever written; one release store per block
 
   std::vector<float> fade_table;
@@ -138,10 +141,12 @@ struct Processor::Impl
     const std::size_t n = static_cast<std::size_t>(to - from);
     const std::size_t start = static_cast<std::size_t>(from & (kHistoryCapacity - 1));
     const std::size_t first = std::min(n, kHistoryCapacity - start);
-    std::memcpy(out, history.data() + start, first * sizeof(float));
-    if (first < n)
-      std::memcpy(out + first, history.data(), (n - first) * sizeof(float));
-    return history_pos.load(std::memory_order_acquire) - from <= kHistoryCapacity;
+    for (std::size_t i = 0; i < first; ++i)
+      out[i] = history[start + i].load(std::memory_order_relaxed);
+    for (std::size_t i = first; i < n; ++i)
+      out[i] = history[i - first].load(std::memory_order_relaxed);
+    std::atomic_thread_fence(std::memory_order_acquire); // the reads above are complete before the position is read again
+    return history_pos.load(std::memory_order_relaxed) - from <= kHistoryCapacity;
   }
 
   // Gives an engine `n` samples as input and throws the output away (only its state matters).
@@ -173,10 +178,12 @@ struct Processor::Impl
   {
     const std::uint64_t pos = history_pos.load(std::memory_order_relaxed);
     const std::size_t start = static_cast<std::size_t>(pos & (kHistoryCapacity - 1));
-    const std::size_t first = std::min(static_cast<std::size_t>(m), kHistoryCapacity - start);
-    std::memcpy(history.data() + start, x, first * sizeof(float));
-    if (first < static_cast<std::size_t>(m))
-      std::memcpy(history.data(), x + first, (static_cast<std::size_t>(m) - first) * sizeof(float));
+    const std::size_t count = static_cast<std::size_t>(m);
+    const std::size_t first = std::min(count, kHistoryCapacity - start);
+    for (std::size_t i = 0; i < first; ++i)
+      history[start + i].store(x[i], std::memory_order_relaxed);
+    for (std::size_t i = first; i < count; ++i)
+      history[i - first].store(x[i], std::memory_order_relaxed);
     history_pos.store(pos + static_cast<std::uint64_t>(m), std::memory_order_release);
   }
 
@@ -422,7 +429,9 @@ void Processor::prepare(const ProcessorConfig& config)
   std::vector<float> in_f(static_cast<std::size_t>(config.max_block)), out_f(static_cast<std::size_t>(config.max_block));
   std::vector<float> model_buf(converter ? static_cast<std::size_t>(converter->max_model_block()) : 0u);
   std::vector<float> scratch_in(static_cast<std::size_t>(engine_block)), scratch_out(static_cast<std::size_t>(engine_block));
-  std::vector<float> history(kHistoryCapacity, 0.0f);
+  std::vector<std::atomic<float>> history(kHistoryCapacity);
+  for (auto& h : history)
+    h.store(0.0f, std::memory_order_relaxed);
   const double cost_ratio = config.adaptive.enabled ? measure_cost_ratio(m.full ? &*m.full : nullptr, m.lite ? &*m.lite : nullptr) : 0.0;
 
   Impl& p = *impl_;
@@ -469,7 +478,8 @@ void Processor::reset()
     return;
   p.discard_swaps();
   p.generation.fetch_add(1); // tickets made before the reset belong to the old history
-  std::fill(p.history.begin(), p.history.end(), 0.0f);
+  for (auto& h : p.history)
+    h.store(0.0f, std::memory_order_relaxed);
   p.history_pos.store(0);
   p.active->engine->reset(p.engine_block);
   if (p.converter)

@@ -97,7 +97,9 @@ that the conversion costs a large part of it (see [results](RESULTS.md)).
 ## 6. Model swap (`processor.cpp`)
 
 The audio thread writes the signal that enters the engine (after the sample-rate conversion) into a history ring of 32768 samples, and
-publishes the number of samples written with a release store. To swap:
+publishes the number of samples written with a release store. The elements of the ring are relaxed atomics, because a control
+thread reads them while the audio thread writes: the reader copies a range, issues an acquire fence, and discards the copy if the published
+position shows that the audio thread has overwritten part of it. Relaxed atomic floats are ordinary moves on x86. To swap:
 
 1. `prepare_swap` (control thread) builds the new engine and runs it over the last 6347 + 64 samples of the history, so that its state matches
    the running engine, and then over the samples that arrived meanwhile, until the gap is below 512 samples. It checks that the audio
