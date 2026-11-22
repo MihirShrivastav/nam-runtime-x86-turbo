@@ -122,8 +122,9 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ -DNAMTURBO_SKIP_ALLOCATOR_TEST=ON "-DCMAKE_CXX_FLAGS=$FLAGS"
       - name: Build
         run: cmake --build build --parallel
+      # install_consumer builds a separate project without the sanitizer flags, which cannot link the instrumented library.
       - name: Test
-        run: ctest --test-dir build --output-on-failure -E two_instance
+        run: ctest --test-dir build --output-on-failure -E "two_instance|install_consumer"
 
   # Publishes a GitHub release when a tag "vMAJOR.MINOR.PATCH[-PRERELEASE]" is pushed and all gating jobs have passed.
   release:

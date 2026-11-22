@@ -19,6 +19,17 @@
 using namespace namturbo;
 using json = nlohmann::json;
 
+// A sanitizer slows the engine down several times, so a run at 8 or 20 times real time exceeds what the engine can do. In such a build, the
+// checks of how many swaps fit into the run are skipped; the checks of consistency and of the output remain, and the sanitizer watches the threads.
+#ifndef __has_feature
+  #define __has_feature(x) 0
+#endif
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) || __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+constexpr bool kSanitized = true;
+#else
+constexpr bool kSanitized = false;
+#endif
+
 static int g_failures = 0;
 #define CHECK(cond)                                                         \
   do                                                                        \
@@ -520,10 +531,10 @@ static void audio_and_control_threads_together()
                 sc.rate, sc.speed < 10.0 ? "8x real time" : "20x real time", committed, refused, static_cast<unsigned long long>(p.swaps_completed()),
                 static_cast<unsigned long long>(p.swaps_dropped()), 100.0 * p.stats().p99_load, 100.0 * p.stats().max_load, peak);
     CHECK(finite && peak < 2.0);
-    CHECK(committed >= (sc.speed < 10.0 ? 4 : 2));
-    CHECK(refused <= 2 * committed + 2); // out-of-date tickets are refused cleanly; on a busy machine they are more frequent
+    CHECK(kSanitized || committed >= (sc.speed < 10.0 ? 4 : 2));
+    CHECK(kSanitized || refused <= 2 * committed + 2); // out-of-date tickets are refused cleanly; on a busy machine they are more frequent
     CHECK(p.swaps_completed() + p.swaps_dropped() <= static_cast<std::uint64_t>(committed));
-    CHECK(p.swaps_completed() >= static_cast<std::uint64_t>(committed) / 2);
+    CHECK(kSanitized || p.swaps_completed() >= static_cast<std::uint64_t>(committed) / 2);
   }
 }
 
