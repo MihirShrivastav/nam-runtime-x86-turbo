@@ -2,7 +2,9 @@
 //
 //   auto model = namturbo::Model::load("amp.nam");            // once, on a non-real-time thread
 //   namturbo::Processor processor(model);                      // one per mono audio stream
-//   processor.prepare({.sample_rate = 48000.0, .max_block = 512});   // when the host prepares to play
+//   namturbo::ProcessorConfig config;                          // defaults: 48 kHz, blocks of up to 1024 samples
+//   config.max_block = 512;
+//   processor.prepare(config);                                 // when the host prepares to play
 //   processor.process(in, out, n);                             // on the audio thread, for every block
 #pragma once
 

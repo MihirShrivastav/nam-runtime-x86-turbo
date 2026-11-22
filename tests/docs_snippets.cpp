@@ -116,7 +116,9 @@ void umbrella_comment(const float* in, float* out, int n)
 {
   auto model = namturbo::Model::load("amp.nam");
   namturbo::Processor processor(model);
-  processor.prepare({.sample_rate = 48000.0, .max_block = 512});
+  namturbo::ProcessorConfig config;
+  config.max_block = 512;
+  processor.prepare(config);
   processor.process(in, out, n);
   (void)namturbo::version_string();
   (void)namturbo::version().major;
