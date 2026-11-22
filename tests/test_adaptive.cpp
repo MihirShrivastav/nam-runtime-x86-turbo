@@ -20,6 +20,17 @@
 using namespace namturbo;
 using json = nlohmann::json;
 
+// A sanitizer slows the engine down by a factor of 10 or more, so the load that the test below expects at the default thresholds (well under 30%)
+// need not hold. In such a build the absolute-load checks are skipped; the tests that force their decisions with extreme thresholds are unaffected.
+#ifndef __has_feature
+  #define __has_feature(x) 0
+#endif
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__) || __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+constexpr bool kSanitized = true;
+#else
+constexpr bool kSanitized = false;
+#endif
+
 static int g_failures = 0;
 #define CHECK(cond)                                                         \
   do                                                                        \
@@ -173,9 +184,9 @@ static void holds_still_when_the_load_is_low()
   a.on_switch = [&](Variant v) { r.events.push_back(v); };
   r.prepare(a); // the default thresholds: 70% and 30%
   r.run_blocks(3000);
-  CHECK(r.processor.variant() == Variant::Full && r.events.empty() && r.processor.swaps_completed() == 0);
+  CHECK(kSanitized || (r.processor.variant() == Variant::Full && r.events.empty() && r.processor.swaps_completed() == 0));
   std::printf("  3000 blocks at a load of %.2f%% (high threshold 70%%): no switch\n", 100.0 * r.processor.smoothed_load());
-  CHECK(r.processor.smoothed_load() > 0.0 && r.processor.smoothed_load() < 0.3);
+  CHECK(r.processor.smoothed_load() > 0.0 && (kSanitized || r.processor.smoothed_load() < 0.3));
 }
 
 static void a_choice_of_the_program_is_respected()
