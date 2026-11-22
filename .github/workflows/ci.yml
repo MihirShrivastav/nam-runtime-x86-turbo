@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Gating jobs: Windows with MSVC, warnings as errors.
+  windows-msvc:
+    name: Windows, MSVC
+    runs-on: windows-2022
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure
+        run: cmake -S . -B build -DNAMTURBO_WERROR=ON
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      # The two-instance tests check real-time deadlines and are not reliable on shared virtual machines.
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure -E two_instance
+
+  # The same build with the NAM Core baseline: accuracy against NAM Core, golden outputs, benchmark smoke tests.
+  windows-baseline:
+    name: Windows, MSVC, with baseline
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install NumPy
+        run: python -m pip install numpy
+      - name: Configure
+        run: cmake -S . -B build -DNAMTURBO_BASELINE=ON -DNAMTURBO_WERROR=ON
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure -E two_instance
+
+  # The generated documentation must match the data in docs/results.
+  docs:
+    name: Generated documentation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Regenerate
+        run: python benchmarks/make_docs.py
+      - name: Compare with the committed files
+        run: git diff --exit-code -- README.md docs/RESULTS.md
+
+  # Experimental jobs: they report but do not fail the workflow. Support for these configurations is not claimed.
+  windows-clang-cl:
+    name: Windows, clang-cl (experimental)
+    runs-on: windows-2022
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Find clang-cl
+        shell: pwsh
+        run: Get-ChildItem -Recurse -Filter clang-cl.exe "C:\Program Files\Microsoft Visual Studio" -ErrorAction SilentlyContinue | Select-Object -First 3 FullName
+      - name: Configure
+        run: cmake -S . -B build -T ClangCL -DNAMTURBO_WERROR=ON
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure -E two_instance
+
+  linux:
+    name: Linux, ${{ matrix.compiler }} (experimental)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure
+        run: |
+          if [ "${{ matrix.compiler }}" = "gcc" ]; then export CC=gcc CXX=g++; else export CC=clang CXX=clang++; fi
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNAMTURBO_WERROR=ON
+      - name: Build
+        run: cmake --build build --parallel
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -E two_instance
+
+  linux-sanitizers:
+    name: Linux, ${{ matrix.sanitizer }} (experimental)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [address-undefined, thread]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Lower the address-space randomisation (required by ThreadSanitizer on recent kernels)
+        run: sudo sysctl vm.mmap_rnd_bits=28
+      - name: Configure
+        run: |
+          if [ "${{ matrix.sanitizer }}" = "thread" ]; then FLAGS="-fsanitize=thread -g"; else FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -g"; fi
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ "-DCMAKE_CXX_FLAGS=$FLAGS"
+      # test_realtime replaces the global allocator, which the sanitizers also do.
+      - name: Build
+        run: cmake --build build --parallel -- -k 0
+      - name: Test
+        run: ctest --test-dir build --output-on-failure -E "two_instance|test_realtime"
