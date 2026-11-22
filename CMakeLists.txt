@@ -25,6 +25,7 @@ option(NAMTURBO_BUILD_TESTS "Build the tests, tools and benchmarks" ${NAMTURBO_M
 option(NAMTURBO_INSTALL "Generate the install rules" ${NAMTURBO_MAIN_PROJECT})
 option(NAMTURBO_BASELINE "Build the comparison with NAM Core: baseline rows in the benchmarks, the precision comparison, and the tools that make the reference outputs. Needs the NAM Core submodule and Python" OFF)
 option(NAMTURBO_WERROR "Treat warnings as errors in every target of this project (not in NAM Core); the project must build without warnings with MSVC, clang-cl, GCC and Clang" OFF)
+option(NAMTURBO_SKIP_ALLOCATOR_TEST "Do not build test_realtime, which replaces the global allocator (sanitizers replace it as well)" OFF)
 option(NAMTURBO_PROFILE "Build with per-section cycle counters (bench prints them)" OFF)
 
 # The model and the data the tests use. The model is the example A2 slimmable model of NAM Core (MIT licence, see NOTICE);
@@ -118,7 +119,9 @@ set_tests_properties(test_resampler PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 900)
 namturbo_test(test_ref_parity)
 namturbo_test(test_avx2_parity)
 namturbo_test(test_avx2_robust)
-namturbo_test(test_realtime)
+if(NOT NAMTURBO_SKIP_ALLOCATOR_TEST)
+  namturbo_test(test_realtime)
+endif()
 namturbo_test(test_cpu_failure)
 namturbo_test(test_fuzz_loader)
 # The same suites against the A2-Lite engine (slim 0.0).

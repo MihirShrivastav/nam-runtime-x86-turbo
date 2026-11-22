@@ -21,6 +21,7 @@ The tests need no other library and no Python. They use the files in `tests/data
 | `NAMTURBO_WERROR` | off | Treat warnings as errors in every target of the project. The project must build without warnings. Use it before submitting a change. |
 | `NAMTURBO_BASELINE` | off | Build the comparison with NAM Core: baseline columns in the benchmarks, the accuracy tool, the precision tests, and the tools that make the reference outputs. Needs the NAM Core submodule and Python 3 with NumPy. |
 | `NAMTURBO_BASELINE_AVX2` | on | Build NAM Core (only the baseline) with AVX2 and FMA code generation. |
+| `NAMTURBO_SKIP_ALLOCATOR_TEST` | off | Do not build `test_realtime`. It replaces the global allocator, as the sanitizers do, so the sanitizer builds turn it off. |
 | `NAMTURBO_PROFILE` | off | Per-section cycle counters in the engines (the `bench` program prints them). |
 | `NAMTURBO_TEST_MODEL`, `NAMTURBO_TEST_DATA` | files in `tests/data` | The model and the data folder that the tests use. |
 
@@ -93,7 +94,9 @@ Steps for a release:
 2. Run all tests with and without the baseline (`NAMTURBO_WERROR=ON`).
 3. Rerun the benchmarks on the test machines (`benchmarks/run_report.py`, `two_instance`), add the data to `docs/results/`, and regenerate
    the documentation with `python benchmarks/make_docs.py`. CI fails if the generated files differ from the committed files.
-4. Tag the commit `vMAJOR.MINOR.PATCH[-PRERELEASE]` and publish the release (a pre-release for release candidates).
+4. Tag the commit `vMAJOR.MINOR.PATCH[-PRERELEASE]` and push the tag. The CI release job checks that the tag matches `version.h`, runs all
+   gating jobs including the baseline, and then publishes the GitHub release with the section of `CHANGELOG.md` as notes and a package of the
+   headers and the library built with MSVC. Tags with a pre-release identifier are published as pre-releases (`tools/release_info.py`).
 
 ## Licence
 

@@ -30,9 +30,11 @@ jobs:
       - name: Test
         run: ctest --test-dir build -C Release --output-on-failure -E two_instance
 
-  # The same build with the NAM Core baseline: accuracy against NAM Core, golden outputs, benchmark smoke tests.
+  # The same build with the NAM Core baseline: precision against NAM Core, golden outputs, benchmark smoke tests.
+  # NAM Core takes about two minutes to build, so this job runs for pull requests, tags and manual starts, not for every push.
   windows-baseline:
     name: Windows, MSVC, with baseline
+    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/')
     runs-on: windows-2022
     timeout-minutes: 45
     steps:
@@ -66,7 +68,7 @@ jobs:
       - name: Compare with the committed files
         run: git diff --exit-code -- README.md docs/RESULTS.md
 
-  # Experimental jobs: they report but do not fail the workflow. Support for these configurations is not claimed.
+  # Experimental jobs: they report but do not fail the workflow.
   windows-clang-cl:
     name: Windows, clang-cl (experimental)
     runs-on: windows-2022
@@ -74,9 +76,6 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
-      - name: Find clang-cl
-        shell: pwsh
-        run: Get-ChildItem -Recurse -Filter clang-cl.exe "C:\Program Files\Microsoft Visual Studio" -ErrorAction SilentlyContinue | Select-Object -First 3 FullName
       - name: Configure
         run: cmake -S . -B build -T ClangCL -DNAMTURBO_WERROR=ON
       - name: Build
@@ -115,14 +114,49 @@ jobs:
         sanitizer: [address-undefined, thread]
     steps:
       - uses: actions/checkout@v6
-      - name: Lower the address-space randomisation (required by ThreadSanitizer on recent kernels)
+      # ThreadSanitizer needs a lower address-space randomisation on recent kernels.
+      - name: Lower the address-space randomisation
         run: sudo sysctl vm.mmap_rnd_bits=28
       - name: Configure
         run: |
           if [ "${{ matrix.sanitizer }}" = "thread" ]; then FLAGS="-fsanitize=thread -g"; else FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -g"; fi
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ "-DCMAKE_CXX_FLAGS=$FLAGS"
-      # test_realtime replaces the global allocator, which the sanitizers also do.
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang++ -DNAMTURBO_SKIP_ALLOCATOR_TEST=ON "-DCMAKE_CXX_FLAGS=$FLAGS"
       - name: Build
-        run: cmake --build build --parallel -- -k 0
+        run: cmake --build build --parallel
       - name: Test
-        run: ctest --test-dir build --output-on-failure -E "two_instance|test_realtime"
+        run: ctest --test-dir build --output-on-failure -E two_instance
+
+  # Publishes a GitHub release when a tag "vMAJOR.MINOR.PATCH[-PRERELEASE]" is pushed and all gating jobs have passed.
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows-msvc, windows-baseline, docs]
+    runs-on: windows-2022
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Check that the tag matches the version in version.h
+        run: python tools/release_info.py check "${{ github.ref_name }}"
+      - name: Build and install
+        run: |
+          cmake -S . -B build -DNAMTURBO_BUILD_TESTS=OFF
+          cmake --build build --config Release --parallel
+          cmake --install build --config Release --prefix "package/namturbo-${{ github.ref_name }}-windows-x64-msvc"
+      - name: Package
+        shell: pwsh
+        run: Compress-Archive -Path "package/namturbo-${{ github.ref_name }}-windows-x64-msvc" -DestinationPath "namturbo-${{ github.ref_name }}-windows-x64-msvc.zip"
+      - name: Release notes
+        run: python tools/release_info.py notes "${{ github.ref_name }}" > notes.md
+      - name: Publish
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pre=""
+          if [ "$(python tools/release_info.py prerelease "$GITHUB_REF_NAME")" = "true" ]; then pre="--prerelease"; fi
+          gh release create "$GITHUB_REF_NAME" --title "namturbo $GITHUB_REF_NAME" --notes-file notes.md $pre "namturbo-$GITHUB_REF_NAME-windows-x64-msvc.zip"
