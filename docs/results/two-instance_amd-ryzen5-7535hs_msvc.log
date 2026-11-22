@@ -1,0 +1,54 @@
+== two instances (A2-full + A2-full) on one thread, 60 s of audio, buffer 64, paced to real time (sleeping), raised priority
+   ours (AVX2 engines)        compute per block (pair): p50    56.8 us  p99   140.4  p99.9   255.9  max    425.3   =  4.3% / 10.5% /  31.9% of the 1333 us deadline
+                              blocks over the deadline: 0 of 45000   output finite: yes
+                              wake-up lateness (operating system): p50 285 us  p99 732  max 4136
+   NAM Core (fast path)       compute per block (pair): p50   178.4 us  p99   222.3  p99.9   287.3  max    394.8   = 13.4% / 16.7% /  29.6% of the 1333 us deadline
+                              blocks over the deadline: 0 of 45000   output finite: yes
+                              wake-up lateness (operating system): p50 352 us  p99 767  max 2459
+   median pair time: ours 56.8 us, NAM Core 178.4 us (3.14x)
+PASSED: no block of the pair exceeded its deadline
+== two instances (A2-full + A2-lite) on one thread, 60 s of audio, buffer 64, paced to real time (sleeping), raised priority
+   ours (AVX2 engines)        compute per block (pair): p50    33.2 us  p99    66.2  p99.9    97.0  max    226.7   =  2.5% /  5.0% /  17.0% of the 1333 us deadline
+                              blocks over the deadline: 0 of 45000   output finite: yes
+                              wake-up lateness (operating system): p50 254 us  p99 765  max 2747
+   NAM Core (fast path)       compute per block (pair): p50   119.7 us  p99   168.1  p99.9   208.8  max    301.4   =  9.0% / 12.6% /  22.6% of the 1333 us deadline
+                              blocks over the deadline: 0 of 45000   output finite: yes
+                              wake-up lateness (operating system): p50 318 us  p99 849  max 19817
+   median pair time: ours 33.2 us, NAM Core 119.7 us (3.61x)
+PASSED: no block of the pair exceeded its deadline
+== two instances (A2-full + A2-full) on one thread, 60 s of audio, buffer 128, paced to real time (sleeping), raised priority
+   ours (AVX2 engines)        compute per block (pair): p50   144.7 us  p99   216.4  p99.9   273.6  max    341.6   =  5.4% /  8.1% /  12.8% of the 2667 us deadline
+                              blocks over the deadline: 0 of 22500   output finite: yes
+                              wake-up lateness (operating system): p50 256 us  p99 846  max 2494
+   NAM Core (fast path)       compute per block (pair): p50   371.7 us  p99   468.6  p99.9   551.2  max    714.1   = 13.9% / 17.6% /  26.8% of the 2667 us deadline
+                              blocks over the deadline: 0 of 22500   output finite: yes
+                              wake-up lateness (operating system): p50 250 us  p99 825  max 2358
+   median pair time: ours 144.7 us, NAM Core 371.7 us (2.57x)
+PASSED: no block of the pair exceeded its deadline
+== two instances (A2-full + A2-lite) on one thread, 60 s of audio, buffer 128, paced to real time (sleeping), raised priority
+   ours (AVX2 engines)        compute per block (pair): p50    97.7 us  p99   152.4  p99.9   220.7  max    291.4   =  3.7% /  5.7% /  10.9% of the 2667 us deadline
+                              blocks over the deadline: 0 of 22500   output finite: yes
+                              wake-up lateness (operating system): p50 262 us  p99 847  max 2912
+   NAM Core (fast path)       compute per block (pair): p50   260.1 us  p99   342.5  p99.9   393.6  max    509.5   =  9.8% / 12.8% /  19.1% of the 2667 us deadline
+                              blocks over the deadline: 0 of 22500   output finite: yes
+                              wake-up lateness (operating system): p50 251 us  p99 782  max 1934
+   median pair time: ours 97.7 us, NAM Core 260.1 us (2.66x)
+PASSED: no block of the pair exceeded its deadline
+== two instances (A2-full + A2-full) on one thread, 60 s of audio, buffer 256, paced to real time (sleeping), raised priority
+   ours (AVX2 engines)        compute per block (pair): p50   296.3 us  p99   418.4  p99.9   468.0  max    680.5   =  5.6% /  7.8% /  12.8% of the 5333 us deadline
+                              blocks over the deadline: 0 of 11250   output finite: yes
+                              wake-up lateness (operating system): p50 286 us  p99 793  max 1997
+   NAM Core (fast path)       compute per block (pair): p50   703.1 us  p99   882.8  p99.9  1064.2  max   1223.4   = 13.2% / 16.6% /  22.9% of the 5333 us deadline
+                              blocks over the deadline: 0 of 11250   output finite: yes
+                              wake-up lateness (operating system): p50 286 us  p99 892  max 1334
+   median pair time: ours 296.3 us, NAM Core 703.1 us (2.37x)
+PASSED: no block of the pair exceeded its deadline
+== two instances (A2-full + A2-lite) on one thread, 60 s of audio, buffer 256, paced to real time (sleeping), raised priority
+   ours (AVX2 engines)        compute per block (pair): p50   200.2 us  p99   293.8  p99.9   343.5  max    402.2   =  3.8% /  5.5% /   7.5% of the 5333 us deadline
+                              blocks over the deadline: 0 of 11250   output finite: yes
+                              wake-up lateness (operating system): p50 282 us  p99 788  max 1450
+   NAM Core (fast path)       compute per block (pair): p50   503.0 us  p99   599.9  p99.9   711.8  max    783.1   =  9.4% / 11.2% /  14.7% of the 5333 us deadline
+                              blocks over the deadline: 0 of 11250   output finite: yes
+                              wake-up lateness (operating system): p50 274 us  p99 830  max 2041
+   median pair time: ours 200.2 us, NAM Core 503.0 us (2.51x)
+PASSED: no block of the pair exceeded its deadline

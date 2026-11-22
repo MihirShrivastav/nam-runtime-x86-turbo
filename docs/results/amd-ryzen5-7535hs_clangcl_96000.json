@@ -1,0 +1,29 @@
+{
+  "namturbo_version": "0.1.0",
+  "cpu": "AMD Ryzen 5 7535HS with Radeon Graphics",
+  "compiler": "clang-cl 19.1.5 ",
+  "host_rate": 96000,
+  "seconds": 3.00,
+  "runs": 5,
+  "pinned_core": 2,
+  "baseline": false,
+  "rows": [
+    {"model": "test-amp-and-cab.nam", "variant": "full", "buffer": 64, "block_us": 666.667, "ours_p50_us": 12.000, "ours_p99_us": 17.800, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "test-amp-and-cab.nam", "variant": "full", "buffer": 128, "block_us": 1333.333, "ours_p50_us": 23.600, "ours_p99_us": 35.904, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "test-amp-and-cab.nam", "variant": "full", "buffer": 256, "block_us": 2666.667, "ours_p50_us": 51.700, "ours_p99_us": 117.100, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "test-amp-and-cab.nam", "variant": "full", "buffer": 512, "block_us": 5333.333, "ours_p50_us": 100.300, "ours_p99_us": 148.479, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "test-amp-and-cab.nam", "variant": "lite", "buffer": 64, "block_us": 666.667, "ours_p50_us": 3.200, "ours_p99_us": 3.801, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "test-amp-and-cab.nam", "variant": "lite", "buffer": 128, "block_us": 1333.333, "ours_p50_us": 5.400, "ours_p99_us": 7.051, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "test-amp-and-cab.nam", "variant": "lite", "buffer": 256, "block_us": 2666.667, "ours_p50_us": 10.100, "ours_p99_us": 13.800, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "test-amp-and-cab.nam", "variant": "lite", "buffer": 512, "block_us": 5333.333, "ours_p50_us": 19.600, "ours_p99_us": 23.990, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "a2-example.nam", "variant": "full", "buffer": 64, "block_us": 666.667, "ours_p50_us": 11.600, "ours_p99_us": 14.800, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "a2-example.nam", "variant": "full", "buffer": 128, "block_us": 1333.333, "ours_p50_us": 22.400, "ours_p99_us": 28.302, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "a2-example.nam", "variant": "full", "buffer": 256, "block_us": 2666.667, "ours_p50_us": 44.600, "ours_p99_us": 55.556, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "a2-example.nam", "variant": "full", "buffer": 512, "block_us": 5333.333, "ours_p50_us": 92.950, "ours_p99_us": 133.519, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "a2-example.nam", "variant": "lite", "buffer": 64, "block_us": 666.667, "ours_p50_us": 3.200, "ours_p99_us": 3.701, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "a2-example.nam", "variant": "lite", "buffer": 128, "block_us": 1333.333, "ours_p50_us": 5.400, "ours_p99_us": 5.900, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "a2-example.nam", "variant": "lite", "buffer": 256, "block_us": 2666.667, "ours_p50_us": 10.000, "ours_p99_us": 11.800, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "a2-example.nam", "variant": "lite", "buffer": 512, "block_us": 5333.333, "ours_p50_us": 19.900, "ours_p99_us": 25.617, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000}
+  ],
+  "esr_db": []
+}
