@@ -650,9 +650,9 @@ static void cpu_and_version()
   std::printf("cpu_and_version\n");
   const CpuSupport c = check_cpu();
   CHECK(c.supported && c.detail.empty());
-  CHECK(std::string(version_string()) == "1.0.0-rc.1");
+  CHECK(std::string(version_string()) == "1.0.0");
   CHECK(version().major == 1 && version().minor == 0 && version().patch == 0);
-  CHECK(std::string(kPreRelease) == "rc.1");
+  CHECK(std::string(kPreRelease).empty());
 }
 
 static void guarded(const char* name, void (*fn)())

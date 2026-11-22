@@ -7,9 +7,9 @@ The version is defined in `include/namturbo/version.h`.
 
 ## [Unreleased]
 
-## [1.0.0-rc.1] - 2026-11-22
+## [1.0.0] - 2026-11-22
 
-First release candidate.
+First stable release. It has the content of the release candidate 1.0.0-rc.1; only the version number differs.
 
 ### Added
 
@@ -33,3 +33,7 @@ First release candidate.
 - Continuous integration: Windows (MSVC, clang-cl) and Linux (Ubuntu 24.04, GCC 13.3, Clang 18.1) build with warnings as errors and pass the tests.
   Sanitizer builds (AddressSanitizer, UndefinedBehaviorSanitizer, ThreadSanitizer) pass the tests. Benchmarks were run on Windows only. macOS (Intel)
   has not been tested.
+
+## [1.0.0-rc.1] - 2026-11-22
+
+First release candidate. See 1.0.0 for the content.
