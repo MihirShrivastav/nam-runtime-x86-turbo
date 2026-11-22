@@ -31,4 +31,5 @@ First release candidate.
 
 - Tests and benchmarks on Windows 11 with MSVC 19.44 and clang-cl 19.1.5 (AMD Ryzen 5 7535HS) and with MSVC 19.44 (Intel Core Ultra 5 245K).
 - Continuous integration: Windows (MSVC, clang-cl) and Linux (Ubuntu 24.04, GCC 13.3, Clang 18.1) build with warnings as errors and pass the tests.
-  Benchmarks were run on Windows only. macOS (Intel) has not been tested.
+  Sanitizer builds (AddressSanitizer, UndefinedBehaviorSanitizer, ThreadSanitizer) pass the tests. Benchmarks were run on Windows only. macOS (Intel)
+  has not been tested.

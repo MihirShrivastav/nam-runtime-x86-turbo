@@ -15,7 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Gating jobs: Windows with MSVC and Linux with GCC and Clang, warnings as errors.
+  # All jobs gate the workflow and the release. Windows: MSVC and clang-cl; Linux: GCC and Clang, all with warnings as errors; Linux
+  # sanitizers: AddressSanitizer with UndefinedBehaviorSanitizer, and ThreadSanitizer.
   windows-msvc:
     name: Windows, MSVC
     runs-on: windows-2022
@@ -87,11 +88,9 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure -E two_instance
 
-  # Experimental jobs: they report but do not fail the workflow.
   windows-clang-cl:
-    name: Windows, clang-cl (experimental)
+    name: Windows, clang-cl
     runs-on: windows-2022
-    continue-on-error: true
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -103,9 +102,8 @@ jobs:
         run: ctest --test-dir build -C Release --output-on-failure -E two_instance
 
   linux-sanitizers:
-    name: Linux, ${{ matrix.sanitizer }} (experimental)
+    name: Linux, ${{ matrix.sanitizer }}
     runs-on: ubuntu-24.04
-    continue-on-error: true
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -130,7 +128,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows-msvc, windows-baseline, linux, docs]
+    needs: [windows-msvc, windows-baseline, windows-clang-cl, linux, linux-sanitizers, docs]
     runs-on: windows-2022
     timeout-minutes: 30
     permissions:

@@ -127,6 +127,7 @@ Threading, latency, swaps, monitoring and stereo: [docs/integration-guide.md](do
 | Windows 11, AMD Ryzen 5 7535HS, MSVC 19.44 and clang-cl 19.1.5 | Tests and benchmarks passed |
 | Windows 11, Intel Core Ultra 5 245K, MSVC 19.44 | Tests and benchmarks passed |
 | GitHub Actions: Windows Server 2022 (MSVC, clang-cl) and Linux, Ubuntu 24.04 (GCC 13.3, Clang 18.1) | Build with warnings as errors and tests passed; no benchmarks |
+| GitHub Actions: Linux, Ubuntu 24.04, Clang 18.1 | AddressSanitizer, UndefinedBehaviorSanitizer and ThreadSanitizer builds passed the tests |
 | macOS (Intel) | Not tested |
 | ARM | Not supported (AVX2 required) |
 

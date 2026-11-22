@@ -65,8 +65,8 @@ with a baseline column. The pinned NAM Core commit is the one that the submodule
 6. **Warnings.** The project builds without warnings with `NAMTURBO_WERROR=ON` on MSVC and clang-cl.
 7. **Tests.** A new behaviour has a test. A fixed defect has a test that fails without the fix. Tests must not depend on timing in a way
    that fails on a busy machine; the tests that run threads or deadlines run serially (`RUN_SERIAL`).
-8. **Platform.** CI builds and tests on Windows (MSVC, clang-cl) and Ubuntu 24.04 (GCC, Clang); benchmarks have been run on Windows. macOS has not
-   been tested. A change that adds support for another platform needs the test results of that platform.
+8. **Platform.** CI builds and tests on Windows (MSVC, clang-cl) and Ubuntu 24.04 (GCC, Clang, and sanitizer builds with AddressSanitizer,
+   UndefinedBehaviorSanitizer and ThreadSanitizer); benchmarks have been run on Windows. macOS has not been tested. A change that adds support for another platform needs the test results of that platform.
 
 ## Style
 
