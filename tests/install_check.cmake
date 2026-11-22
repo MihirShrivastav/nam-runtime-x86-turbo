@@ -1,0 +1,48 @@
+# Installs the library into a folder of the build tree, builds examples/consumer against that installed copy and runs it.
+# Run by ctest (test install_consumer); needs the library to be built already.
+# Variables: SOURCE_DIR, BINARY_DIR, CONFIG, MODEL, GENERATOR (optional), GENERATOR_PLATFORM (optional), TOOLSET (optional)
+set(prefix "${BINARY_DIR}/install_check/prefix")
+set(consumer_build "${BINARY_DIR}/install_check/consumer")
+file(REMOVE_RECURSE "${BINARY_DIR}/install_check")
+
+function(run what)
+  execute_process(COMMAND ${ARGN} RESULT_VARIABLE rc OUTPUT_VARIABLE out ERROR_VARIABLE err)
+  message("${out}")
+  if(NOT rc EQUAL 0)
+    message(FATAL_ERROR "${what} failed (${rc}):\n${err}")
+  endif()
+endfunction()
+
+run("install" "${CMAKE_COMMAND}" --install "${BINARY_DIR}" --config "${CONFIG}" --prefix "${prefix}")
+
+set(configure "${CMAKE_COMMAND}" -S "${SOURCE_DIR}/examples/consumer" -B "${consumer_build}" "-DCMAKE_PREFIX_PATH=${prefix}" "-DCMAKE_BUILD_TYPE=${CONFIG}")
+if(GENERATOR)
+  list(APPEND configure -G "${GENERATOR}")
+endif()
+if(GENERATOR_PLATFORM)
+  list(APPEND configure -A "${GENERATOR_PLATFORM}")
+endif()
+if(TOOLSET)
+  list(APPEND configure -T "${TOOLSET}")
+endif()
+run("configure the consumer" ${configure})
+run("build the consumer" "${CMAKE_COMMAND}" --build "${consumer_build}" --config "${CONFIG}")
+
+find_program(consumer_exe consumer PATHS "${consumer_build}/${CONFIG}" "${consumer_build}" NO_DEFAULT_PATH)
+if(NOT consumer_exe)
+  message(FATAL_ERROR "the consumer program was not built")
+endif()
+run("run the consumer" "${consumer_exe}" "${MODEL}")
+run("run the consumer at 44.1 kHz" "${consumer_exe}" "${MODEL}" 44100)
+
+# The install tree must be complete and self-contained.
+foreach(f include/namturbo/namturbo.h include/namturbo/processor.h lib/cmake/namturbo/namturboConfig.cmake lib/cmake/namturbo/namturboTargets.cmake)
+  if(NOT EXISTS "${prefix}/${f}")
+    message(FATAL_ERROR "missing in the install tree: ${f}")
+  endif()
+endforeach()
+file(GLOB_RECURSE leaked "${prefix}/*json.hpp")
+if(leaked)
+  message(FATAL_ERROR "the JSON header must not be installed: ${leaked}")
+endif()
+message("install check passed")
