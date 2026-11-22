@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Gating jobs: Windows with MSVC, warnings as errors.
+  # Gating jobs: Windows with MSVC and Linux with GCC and Clang, warnings as errors.
   windows-msvc:
     name: Windows, MSVC
     runs-on: windows-2022
@@ -68,25 +68,9 @@ jobs:
       - name: Compare with the committed files
         run: git diff --exit-code -- README.md docs/RESULTS.md
 
-  # Experimental jobs: they report but do not fail the workflow.
-  windows-clang-cl:
-    name: Windows, clang-cl (experimental)
-    runs-on: windows-2022
-    continue-on-error: true
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v6
-      - name: Configure
-        run: cmake -S . -B build -T ClangCL -DNAMTURBO_WERROR=ON
-      - name: Build
-        run: cmake --build build --config Release --parallel
-      - name: Test
-        run: ctest --test-dir build -C Release --output-on-failure -E two_instance
-
   linux:
-    name: Linux, ${{ matrix.compiler }} (experimental)
+    name: Linux, ${{ matrix.compiler }}
     runs-on: ubuntu-24.04
-    continue-on-error: true
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -102,6 +86,21 @@ jobs:
         run: cmake --build build --parallel
       - name: Test
         run: ctest --test-dir build --output-on-failure -E two_instance
+
+  # Experimental jobs: they report but do not fail the workflow.
+  windows-clang-cl:
+    name: Windows, clang-cl (experimental)
+    runs-on: windows-2022
+    continue-on-error: true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - name: Configure
+        run: cmake -S . -B build -T ClangCL -DNAMTURBO_WERROR=ON
+      - name: Build
+        run: cmake --build build --config Release --parallel
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure -E two_instance
 
   linux-sanitizers:
     name: Linux, ${{ matrix.sanitizer }} (experimental)
@@ -130,7 +129,7 @@ jobs:
   release:
     name: Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows-msvc, windows-baseline, docs]
+    needs: [windows-msvc, windows-baseline, linux, docs]
     runs-on: windows-2022
     timeout-minutes: 30
     permissions:

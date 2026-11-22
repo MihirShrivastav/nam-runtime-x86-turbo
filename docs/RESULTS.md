@@ -38,8 +38,7 @@ The baseline is the NAM Core A2 fast path (commit `d3189ed`).
 | Compilers | MSVC 19.44 (Visual Studio 2022), clang-cl 19.1.5 | MSVC 19.44 |
 | Pinned to | logical core 2 | logical core 0 (performance core) |
 
-The machines were not used for other work during the runs. Results on other processors, operating systems and compilers differ. Linux and macOS
-were not tested.
+The machines were not used for other work during the runs. Results on other processors, operating systems and compilers differ. The benchmarks were run on Windows only.
 
 On the Intel processor an efficiency core is slower: at buffer size 64 and 48 kHz, A2-Full needed about 1.9 times the time of a performance core.
 

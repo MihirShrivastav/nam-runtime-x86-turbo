@@ -116,7 +116,7 @@ Threading, latency, swaps, monitoring and stereo: [docs/integration-guide.md](do
 | | |
 |---|---|
 | Processor | x86-64 with AVX2 and FMA (Intel Haswell or newer, AMD Excavator or Zen and newer) |
-| Compiler | C++20: MSVC (Visual Studio 2022) or clang-cl |
+| Compiler | C++20: MSVC (Visual Studio 2022), clang-cl, GCC 13 or Clang 18 |
 | Build system | CMake 3.16 or newer |
 | Models | NAM A2 models (A2-Full, A2-Lite), plain or slimmable. Other architectures are not supported. |
 
@@ -126,7 +126,7 @@ Threading, latency, swaps, monitoring and stereo: [docs/integration-guide.md](do
 |---|---|
 | Windows 11, AMD Ryzen 5 7535HS, MSVC 19.44 and clang-cl 19.1.5 | Tests and benchmarks passed |
 | Windows 11, Intel Core Ultra 5 245K, MSVC 19.44 | Tests and benchmarks passed |
-| Linux (GCC, Clang) | Not tested |
+| GitHub Actions: Windows Server 2022 (MSVC, clang-cl) and Linux, Ubuntu 24.04 (GCC 13.3, Clang 18.1) | Build with warnings as errors and tests passed; no benchmarks |
 | macOS (Intel) | Not tested |
 | ARM | Not supported (AVX2 required) |
 
