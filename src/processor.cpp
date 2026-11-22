@@ -100,7 +100,7 @@ struct Processor::Impl
   // adaptive mode: the audio thread keeps the smoothed load, service() on the control thread decides
   std::atomic<bool> adaptive_on{false};
   std::atomic<double> load_ema{0.0};
-  double ema_tau_ns = 300e6;
+  std::atomic<double> ema_tau_ns{300e6};      // read by the audio thread, changed by prepare() and by set_adaptive() while audio runs
   AdaptiveConfig adaptive;                    // control thread from here on
   std::shared_ptr<const Model> control_model; // the model most recently committed (or the one the processor was prepared with)
   double cost_ratio = 0.0;                    // cost of A2-Full per sample divided by that of A2-Lite, measured; 0 = unknown
@@ -281,7 +281,7 @@ struct Processor::Impl
     if (monitoring)
       monitor.record(static_cast<std::uint64_t>(elapsed_ns), static_cast<std::uint64_t>(block_ns));
     // exponential average of the load: each call counts in proportion to the time it covers
-    const double alpha = 1.0 - std::exp(-block_ns / ema_tau_ns);
+    const double alpha = 1.0 - std::exp(-block_ns / ema_tau_ns.load(std::memory_order_relaxed));
     const double previous = load_ema.load(std::memory_order_relaxed);
     load_ema.store(previous + alpha * (elapsed_ns / block_ns - previous), std::memory_order_relaxed);
   }
@@ -464,7 +464,7 @@ void Processor::prepare(const ProcessorConfig& config)
   p.monitor.reset();
   p.adaptive_on.store(false);
   p.adaptive = config.adaptive;
-  p.ema_tau_ns = config.adaptive.smoothing_ms * 1e6;
+  p.ema_tau_ns.store(config.adaptive.smoothing_ms * 1e6, std::memory_order_relaxed);
   p.load_ema.store(0.0);
   p.control_model = impl_->model;
   p.cost_ratio = cost_ratio;
@@ -736,7 +736,7 @@ void Processor::set_adaptive(const AdaptiveConfig& config)
     p.cost_ratio = measure_cost_ratio(m.full ? &*m.full : nullptr, m.lite ? &*m.lite : nullptr);
   }
   p.adaptive = config;
-  p.ema_tau_ns = config.smoothing_ms * 1e6;
+  p.ema_tau_ns.store(config.smoothing_ms * 1e6, std::memory_order_relaxed);
   p.above_since.reset();
   p.below_since.reset();
   p.adaptive_on.store(config.enabled);

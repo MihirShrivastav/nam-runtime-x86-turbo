@@ -5,6 +5,8 @@
 // The real load of this machine is small and not under the test's control, so the tests set thresholds that force each decision:
 // a high threshold below any real load means "always too slow", a low threshold above any load means "always room for A2-Full".
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <exception>
@@ -12,6 +14,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "json.hpp"
@@ -189,6 +192,43 @@ static void holds_still_when_the_load_is_low()
   CHECK(r.processor.smoothed_load() > 0.0 && (kSanitized || r.processor.smoothed_load() < 0.3));
 }
 
+// set_adaptive() and service() are control-thread functions that may run while the audio thread runs. This test does that, so that a
+// sanitizer sees every field that both threads touch. The settings alternate, which also makes the policy switch variants meanwhile.
+static void settings_change_while_audio_runs()
+{
+  std::printf("settings_change_while_audio_runs\n");
+  Rig r(Model::load(g_model));
+  r.prepare(r.config(0.70, 0.30));
+  std::atomic<bool> stop{false}, finite{true};
+  std::thread audio([&] {
+    std::vector<float> in = make_signal(4800), out(in.size());
+    size_t pos = 0;
+    while (!stop.load())
+    {
+      r.processor.process(in.data() + pos, out.data() + pos, 64);
+      for (size_t i = 0; i < 64; ++i)
+        if (!std::isfinite(out[pos + i]))
+          finite.store(false);
+      pos = (pos + 64) % (in.size() - 64);
+      std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+  });
+  for (int i = 0; i < 40; ++i)
+  {
+    AdaptiveConfig a = r.config(i % 2 ? 1e-6 : 1e9, i % 2 ? 1e-9 : 1e8, 0.0, 0.0);
+    a.smoothing_ms = 5.0 + 20.0 * (i % 5);
+    r.processor.set_adaptive(a);
+    r.processor.service();
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  stop.store(true);
+  audio.join();
+  r.processor.service();
+  CHECK(finite.load());
+  std::printf("  40 changes of the settings while audio ran: output finite, %zu switches, %llu swaps finished\n", r.events.size(),
+              static_cast<unsigned long long>(r.processor.swaps_completed()));
+}
+
 static void a_choice_of_the_program_is_respected()
 {
   std::printf("a_choice_of_the_program_is_respected\n");
@@ -295,6 +335,7 @@ int main(int argc, char** argv)
   guarded("goes_down_when_too_slow_and_back_up_when_there_is_room", goes_down_when_too_slow_and_back_up_when_there_is_room);
   guarded("the_expected_load_of_the_full_variant_decides_the_switch_up", the_expected_load_of_the_full_variant_decides_the_switch_up);
   guarded("holds_still_when_the_load_is_low", holds_still_when_the_load_is_low);
+  guarded("settings_change_while_audio_runs", settings_change_while_audio_runs);
   guarded("a_choice_of_the_program_is_respected", a_choice_of_the_program_is_respected);
   guarded("needs_both_variants", needs_both_variants);
   guarded("validation_and_smoothed_load", validation_and_smoothed_load);
