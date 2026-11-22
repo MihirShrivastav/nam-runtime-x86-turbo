@@ -1,0 +1,6 @@
+# Normalise line endings of text files; keep data files byte for byte.
+* text=auto
+*.nam -text
+*.raw binary
+*.wav binary
+*.json -text

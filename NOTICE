@@ -1,0 +1,27 @@
+nam-runtime-x86-turbo
+Copyright (c) 2026 Mihir Shrivastava. Released under the MIT licence (see LICENSE).
+
+Third-party material in this repository
+---------------------------------------
+
+1. tests/data/a2-example.nam
+   The example A2 model that is distributed with NAM Core
+   (https://github.com/sdatkinson/NeuralAmpModelerCore, folder example_models).
+   NAM Core is released under the MIT licence:
+   Copyright (c) 2023 Steven Atkinson.
+
+2. third_party/nlohmann/json.hpp
+   nlohmann/json 3.12.0 (https://github.com/nlohmann/json), MIT licence, Copyright (c) 2013-2025 Niels Lohmann.
+   Used to read model files. The licence text is in third_party/nlohmann/LICENSE.MIT.
+
+3. NAM Core (git submodule external/NeuralAmpModelerCore)
+   Not part of the library and not needed to build or test it. It is used only when the option
+   NAMTURBO_BASELINE is on: for the speed and accuracy comparison against NAM Core, and to regenerate the
+   reference outputs of the tests. MIT licence, Copyright (c) 2023 Steven Atkinson. It includes the libraries
+   Eigen (MPL 2.0) and nlohmann/json (MIT) under their own licences.
+
+tests/data/test-amp-and-cab.nam is a model made by the author of this repository and is released under the same
+MIT licence as the rest of the repository.
+
+The file format and the A2 network architecture that this library implements are defined by Neural Amp Modeler
+(https://github.com/sdatkinson/neural-amp-modeler) and NAM Core, by Steven Atkinson and contributors.
