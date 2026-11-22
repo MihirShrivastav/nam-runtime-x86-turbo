@@ -111,7 +111,8 @@ position shows that the audio thread has overwritten part of it. Relaxed atomic 
 4. When the fade ends, the old engine goes into a lock-free queue of 8 places. The audio thread never frees an engine; `service()` empties
    the queue.
 
-The audio thread therefore never allocates, never frees and never waits. The cost for it is the catch-up and the two engines during the
+After `prepare()`, only the audio thread reads or replaces the pointer to the active engine; control threads use a separate atomic flag to
+know whether the processor is prepared. The audio thread therefore never allocates, never frees and never waits. The cost for it is the catch-up and the two engines during the
 fade.
 
 ## 7. Monitoring and the adaptive mode

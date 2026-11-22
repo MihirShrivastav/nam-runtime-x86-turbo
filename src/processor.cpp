@@ -59,7 +59,10 @@ SwapTicket::operator bool() const noexcept
 struct Processor::Impl
 {
   std::shared_ptr<const Model> model; // the model the processor was constructed with
-  std::unique_ptr<Slot> active;       // the engine that makes the sound; null before prepare()
+  // The engine that makes the sound; null before prepare(). After prepare() only the audio thread touches this pointer: it replaces it when a
+  // swap is taken. Control threads must not read it (it is momentarily null during the replacement); they use `prepared`.
+  std::unique_ptr<Slot> active;
+  std::atomic<bool> prepared{false};  // true once prepare() has succeeded; read by control threads instead of `active`
   Slot* incoming = nullptr;           // the engine being faded in (audio thread)
   std::atomic<Slot*> pending{nullptr}; // a committed engine that the audio thread has not taken yet
   std::atomic<bool> fading{false};
@@ -469,6 +472,7 @@ void Processor::prepare(const ProcessorConfig& config)
   p.above_since.reset();
   p.below_since.reset();
   p.adaptive_on.store(config.adaptive.enabled);
+  p.prepared.store(true, std::memory_order_release);
 }
 
 void Processor::reset()
@@ -566,7 +570,7 @@ const ModelInfo& Processor::model_info() const noexcept
 SwapTicket Processor::Impl::make_ticket(std::shared_ptr<const Model> target, Variant wanted)
 {
   Impl& p = *this;
-  if (!p.active)
+  if (!p.prepared.load(std::memory_order_acquire))
     throw Error(ErrorCode::InvalidArgument, "prepare() must be called before prepare_swap()");
   if (!target)
     throw Error(ErrorCode::InvalidArgument, "the model is null");
@@ -644,7 +648,7 @@ bool Processor::Impl::commit_ticket(SwapTicket&& ticket)
 
 void Processor::Impl::run_policy()
 {
-  if (!adaptive_on.load() || !active || !control_model)
+  if (!adaptive_on.load() || !prepared.load(std::memory_order_acquire) || !control_model)
     return;
   if (!control_model->has(Variant::Lite) || !control_model->has(Variant::Full) || cost_ratio <= 0.0)
     return;
@@ -723,7 +727,7 @@ void Processor::service()
 void Processor::set_adaptive(const AdaptiveConfig& config)
 {
   Impl& p = *impl_;
-  if (!p.active)
+  if (!p.prepared.load(std::memory_order_acquire))
     throw Error(ErrorCode::InvalidArgument, "prepare() must be called before set_adaptive()");
   validate_adaptive(config);
   if (config.enabled)
