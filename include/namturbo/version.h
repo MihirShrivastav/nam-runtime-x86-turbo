@@ -8,7 +8,7 @@ struct Version
   int major, minor, patch;
 };
 
-constexpr Version kVersion = {1, 0, 0};
+constexpr Version kVersion = {1, 1, 0};
 
 // Pre-release identifier of Semantic Versioning, for example "rc.1" (version 1.0.0-rc.1, which precedes 1.0.0). Empty for a final release.
 inline constexpr const char* kPreRelease = "";
