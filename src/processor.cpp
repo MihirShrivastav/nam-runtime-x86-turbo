@@ -1,7 +1,6 @@
 #include "namturbo/processor.h"
 
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -29,28 +28,15 @@ constexpr std::uint64_t kCommitMaxGap = 1024;    // commit_swap() refuses a tick
 constexpr std::uint64_t kAdoptMaxGap = 4096;     // ... and the audio thread drops one that is further behind than this
 constexpr int kRetireCapacity = 8;               // engines that can wait to be freed by service()
 constexpr int kReplayExtra = 64;                 // samples replayed beyond the receptive field
-constexpr int kMaxPhases = 4;                    // 1x, 2x, or 4x phase-interleaved engines
 
-int oversampling_factor(Oversampling os)
-{
-  switch (os)
-  {
-    case Oversampling::Off: return 1;
-    case Oversampling::X2: return 2;
-    case Oversampling::X4: return 4;
-  }
-  throw Error(ErrorCode::InvalidArgument, "oversampling must be Off, X2, or X4");
-}
-
-// An engine (or 2 / 4 phase-interleaved engines when oversampling) together with what keeps it valid: the model whose weights
-// it uses and, for a swap, how far it has been brought up to date.
+// An engine together with what keeps it valid: the model whose weights it uses (the engine copies them, but a reference keeps the model
+// alive for as long as the processor reports it) and, for a swap, how far it has been brought up to date.
 struct Slot
 {
   std::shared_ptr<const Model> model;
   Variant variant = Variant::Full;
-  std::array<std::unique_ptr<A2Engine>, kMaxPhases> engines;
-  int num_engines = 1;
-  std::uint64_t history_end = 0; // number of model-rate samples of input each engine has been given
+  std::unique_ptr<A2Engine> engine;
+  std::uint64_t history_end = 0; // number of model-rate samples of input the engine has been given
   std::uint64_t generation = 0;  // of the processor's prepare() it was made for
   const void* owner = nullptr;   // the processor it was made for
 };
@@ -86,10 +72,8 @@ struct Processor::Impl
   std::atomic<std::uint32_t> retire_head{0}, retire_tail{0};
 
   std::unique_ptr<RateConverter> converter; // null if the host rate equals the model rate
-  std::unique_ptr<Oversampler> oversampler; // null if oversampling is Off
-  int os_factor = 1;                        // 1, 2, or 4
   int max_block = 0;                        // largest block at the host rate
-  int engine_block = 0;                     // largest block given to an engine at once (at the model rate)
+  int engine_block = 0;                     // largest block given to the engine at once (at the model rate)
   int model_hz = 0;
   int latency = 0;
   std::atomic<int> variant{static_cast<int>(Variant::Full)};
@@ -99,13 +83,11 @@ struct Processor::Impl
   std::vector<float> in_f, out_f;    // scratch for the double version
   std::vector<float> model_buf;      // the signal at the model rate (with a converter)
   std::vector<float> scratch_in, scratch_out; // engine_block each: for the second engine during a fade and for replays
-  std::array<std::vector<float>, kMaxPhases> phase_in, phase_out; // engine_block each when os_factor > 1
 
-  // The engine input of the last kHistoryCapacity samples per phase, as rings. The audio thread writes them while a control
-  // thread may read them (a reader checks afterwards that the part it read was not overwritten), so the elements are relaxed
-  // atomics: plain reads of memory that is being written would be a data race. On x86 a relaxed atomic float load or store is
-  // an ordinary move.
-  std::array<std::vector<std::atomic<float>>, kMaxPhases> history;
+  // The engine input of the last kHistoryCapacity samples, as a ring. The audio thread writes it while a control thread may read it (a
+  // reader checks afterwards that the part it read was not overwritten), so the elements are relaxed atomics: plain reads of memory that is
+  // being written would be a data race. On x86 a relaxed atomic float load or store is an ordinary move.
+  std::vector<std::atomic<float>> history;
   std::atomic<std::uint64_t> history_pos{0}; // number of samples ever written; one release store per block
 
   std::vector<float> fade_table;
@@ -155,18 +137,17 @@ struct Processor::Impl
     }
   }
 
-  // Copies samples [from, to) of history[phase] into out (to - from at most kHistoryCapacity). Returns false if the audio thread
-  // may have overwritten some of them while they were being copied.
-  bool copy_history(int phase, std::uint64_t from, std::uint64_t to, float* out) const
+  // Copies samples [from, to) of the history into out (to - from at most kHistoryCapacity). Returns false if the audio thread may have
+  // overwritten some of them while they were being copied.
+  bool copy_history(std::uint64_t from, std::uint64_t to, float* out) const
   {
-    const auto& ring = history[static_cast<std::size_t>(phase)];
     const std::size_t n = static_cast<std::size_t>(to - from);
     const std::size_t start = static_cast<std::size_t>(from & (kHistoryCapacity - 1));
     const std::size_t first = std::min(n, kHistoryCapacity - start);
     for (std::size_t i = 0; i < first; ++i)
-      out[i] = ring[start + i].load(std::memory_order_relaxed);
+      out[i] = history[start + i].load(std::memory_order_relaxed);
     for (std::size_t i = first; i < n; ++i)
-      out[i] = ring[i - first].load(std::memory_order_relaxed);
+      out[i] = history[i - first].load(std::memory_order_relaxed);
     std::atomic_thread_fence(std::memory_order_acquire); // the reads above are complete before the position is read again
     return history_pos.load(std::memory_order_relaxed) - from <= kHistoryCapacity;
   }
@@ -196,21 +177,16 @@ struct Processor::Impl
     retire_head.store(head + 1, std::memory_order_release);
   }
 
-  void record_history(const float* const* xs, int num_phases, int m)
+  void record_history(const float* x, int m)
   {
     const std::uint64_t pos = history_pos.load(std::memory_order_relaxed);
     const std::size_t start = static_cast<std::size_t>(pos & (kHistoryCapacity - 1));
     const std::size_t count = static_cast<std::size_t>(m);
     const std::size_t first = std::min(count, kHistoryCapacity - start);
-    for (int p = 0; p < num_phases; ++p)
-    {
-      auto& ring = history[static_cast<std::size_t>(p)];
-      const float* x = xs[p];
-      for (std::size_t i = 0; i < first; ++i)
-        ring[start + i].store(x[i], std::memory_order_relaxed);
-      for (std::size_t i = first; i < count; ++i)
-        ring[i - first].store(x[i], std::memory_order_relaxed);
-    }
+    for (std::size_t i = 0; i < first; ++i)
+      history[start + i].store(x[i], std::memory_order_relaxed);
+    for (std::size_t i = first; i < count; ++i)
+      history[i - first].store(x[i], std::memory_order_relaxed);
     history_pos.store(pos + static_cast<std::uint64_t>(m), std::memory_order_release);
   }
 
@@ -244,15 +220,12 @@ struct Processor::Impl
       fading.store(false, std::memory_order_relaxed);
       return;
     }
-    // bring the new engine(s) up to the present: the samples that arrived since prepare_swap() stopped replaying
+    // bring the new engine up to the present: the samples that arrived since prepare_swap() stopped replaying
     while (s->history_end < pos)
     {
       const std::size_t k = static_cast<std::size_t>(std::min<std::uint64_t>(pos - s->history_end, static_cast<std::uint64_t>(engine_block)));
-      for (int p = 0; p < s->num_engines; ++p)
-      {
-        copy_history(p, s->history_end, s->history_end + k, scratch_in.data());
-        s->engines[static_cast<std::size_t>(p)]->process(scratch_in.data(), scratch_out.data(), static_cast<int>(k));
-      }
+      copy_history(s->history_end, s->history_end + k, scratch_in.data());
+      s->engine->process(scratch_in.data(), scratch_out.data(), static_cast<int>(k));
       s->history_end += k;
     }
     if (fade_len == 0)
@@ -265,8 +238,8 @@ struct Processor::Impl
     fade_pos = 0;
   }
 
-  // Runs the engine(s) on m model-rate samples (1x path). x and y may be the same buffer.
-  void process_model_1x(const float* x, float* y, int m)
+  // Runs the engine(s) on m model-rate samples. x and y may be the same buffer.
+  void process_model(const float* x, float* y, int m)
   {
     for (int done = 0; done < m;)
     {
@@ -274,12 +247,12 @@ struct Processor::Impl
       const float* xs = x + done;
       float* ys = y + done;
       if (!incoming)
-        active->engines[0]->process(xs, ys, k);
+        active->engine->process(xs, ys, k);
       else
       {
         std::memcpy(scratch_in.data(), xs, static_cast<std::size_t>(k) * sizeof(float)); // the first engine may overwrite xs
-        active->engines[0]->process(xs, ys, k);
-        incoming->engines[0]->process(scratch_in.data(), scratch_out.data(), k);
+        active->engine->process(xs, ys, k);
+        incoming->engine->process(scratch_in.data(), scratch_out.data(), k);
         for (int i = 0; i < k; ++i)
         {
           const int index = fade_pos + i;
@@ -295,60 +268,6 @@ struct Processor::Impl
           fading.store(false, std::memory_order_relaxed);
         }
       }
-      done += k;
-    }
-  }
-
-  // Runs the oversampled (2x or 4x) phase-interleaved engines on m model-rate samples. x and y may be the same buffer.
-  void process_model_os(const float* x, float* y, int m)
-  {
-    float* pin[kMaxPhases] = {};
-    float* pout[kMaxPhases] = {};
-    const float* pin_const[kMaxPhases] = {};
-    const float* pout_const[kMaxPhases] = {};
-    for (int p = 0; p < os_factor; ++p)
-    {
-      pin[p] = phase_in[static_cast<std::size_t>(p)].data();
-      pout[p] = phase_out[static_cast<std::size_t>(p)].data();
-      pin_const[p] = pin[p];
-      pout_const[p] = pout[p];
-    }
-    for (int done = 0; done < m;)
-    {
-      const int k = std::min(m - done, engine_block);
-      oversampler->upsample(x + done, k, pin);
-      if (!incoming)
-        try_adopt();
-      record_history(pin_const, os_factor, k);
-      if (!incoming)
-      {
-        for (int p = 0; p < os_factor; ++p)
-          active->engines[static_cast<std::size_t>(p)]->process(pin[p], pout[p], k);
-      }
-      else
-      {
-        for (int p = 0; p < os_factor; ++p)
-        {
-          active->engines[static_cast<std::size_t>(p)]->process(pin[p], pout[p], k);
-          incoming->engines[static_cast<std::size_t>(p)]->process(pin[p], scratch_out.data(), k);
-          float* ys = pout[p];
-          for (int i = 0; i < k; ++i)
-          {
-            const int index = fade_pos + i;
-            const float g = index < fade_len ? fade_table[static_cast<std::size_t>(index)] : 1.0f;
-            ys[i] = (1.0f - g) * ys[i] + g * scratch_out[static_cast<std::size_t>(i)];
-          }
-        }
-        fade_pos += k;
-        if (fade_pos >= fade_len)
-        {
-          Slot* s = incoming;
-          incoming = nullptr;
-          make_active(s);
-          fading.store(false, std::memory_order_relaxed);
-        }
-      }
-      oversampler->downsample(pout_const, k, y + done);
       done += k;
     }
   }
@@ -380,16 +299,10 @@ struct Processor::Impl
     }
     if (m > 0)
     {
-      if (os_factor == 1)
-      {
-        if (!incoming)
-          try_adopt();
-        const float* x0 = x;
-        record_history(&x0, 1, m); // before the engine can overwrite x
-        process_model_1x(x, y, m);
-      }
-      else
-        process_model_os(x, y, m);
+      if (!incoming)
+        try_adopt();
+      record_history(x, m); // before the engine can overwrite x
+      process_model(x, y, m);
     }
     if (converter)
       converter->to_host(model_buf.data(), m, out, n);
@@ -488,7 +401,6 @@ void Processor::prepare(const ProcessorConfig& config)
   const CpuSupport cpu = check_cpu();
   if (!cpu.supported)
     throw Error(ErrorCode::CpuUnsupported, cpu.detail);
-  const int os_factor = oversampling_factor(config.oversampling);
   validate_adaptive(config.adaptive);
 
   const Model::Impl& m = *impl_->model->impl_;
@@ -508,16 +420,10 @@ void Processor::prepare(const ProcessorConfig& config)
     converter = std::make_unique<RateConverter>(static_cast<int>(host_hz), static_cast<int>(model_hz), config.max_block, config.resampler);
   const int engine_block = std::min(converter ? converter->max_model_block() : config.max_block, kMaxEngineBlock);
 
-  std::unique_ptr<Oversampler> oversampler;
-  if (os_factor > 1)
-    oversampler = std::make_unique<Oversampler>(os_factor, engine_block, config.resampler);
-
   auto slot = std::make_unique<Slot>();
   slot->model = impl_->model;
   slot->variant = variant;
-  slot->num_engines = os_factor;
-  for (int i = 0; i < os_factor; ++i)
-    slot->engines[static_cast<std::size_t>(i)] = make_engine(weights, engine_block);
+  slot->engine = make_engine(weights, engine_block);
 
   const int fade_len = static_cast<int>(std::lround(config.swap_fade_ms * 1e-3 * model_hz));
   std::vector<float> fade_table(static_cast<std::size_t>(fade_len));
@@ -526,42 +432,21 @@ void Processor::prepare(const ProcessorConfig& config)
   std::vector<float> in_f(static_cast<std::size_t>(config.max_block)), out_f(static_cast<std::size_t>(config.max_block));
   std::vector<float> model_buf(converter ? static_cast<std::size_t>(converter->max_model_block()) : 0u);
   std::vector<float> scratch_in(static_cast<std::size_t>(engine_block)), scratch_out(static_cast<std::size_t>(engine_block));
-  std::array<std::vector<float>, kMaxPhases> phase_in, phase_out;
-  if (os_factor > 1)
-  {
-    for (int i = 0; i < os_factor; ++i)
-    {
-      phase_in[static_cast<std::size_t>(i)].resize(static_cast<std::size_t>(engine_block));
-      phase_out[static_cast<std::size_t>(i)].resize(static_cast<std::size_t>(engine_block));
-    }
-  }
-  std::array<std::vector<std::atomic<float>>, kMaxPhases> history;
-  for (int i = 0; i < os_factor; ++i)
-  {
-    history[static_cast<std::size_t>(i)] = std::vector<std::atomic<float>>(kHistoryCapacity);
-    for (auto& h : history[static_cast<std::size_t>(i)])
-      h.store(0.0f, std::memory_order_relaxed);
-  }
+  std::vector<std::atomic<float>> history(kHistoryCapacity);
+  for (auto& h : history)
+    h.store(0.0f, std::memory_order_relaxed);
   const double cost_ratio = config.adaptive.enabled ? measure_cost_ratio(m.full ? &*m.full : nullptr, m.lite ? &*m.lite : nullptr) : 0.0;
-
-  const int rc_lat = converter ? converter->latency_samples() : 0;
-  const int os_lat_model = oversampler ? oversampler->latency_samples() : 0;
-  const int os_lat_host = (os_lat_model == 0) ? 0 : static_cast<int>(std::lround(static_cast<double>(os_lat_model) * host_hz / model_hz));
 
   Impl& p = *impl_;
   p.discard_swaps();
   p.generation.fetch_add(1);
   p.active = std::move(slot);
   p.converter = std::move(converter);
-  p.oversampler = std::move(oversampler);
-  p.os_factor = os_factor;
   p.in_f = std::move(in_f);
   p.out_f = std::move(out_f);
   p.model_buf = std::move(model_buf);
   p.scratch_in = std::move(scratch_in);
   p.scratch_out = std::move(scratch_out);
-  p.phase_in = std::move(phase_in);
-  p.phase_out = std::move(phase_out);
   p.history = std::move(history);
   p.history_pos.store(0);
   p.fade_table = std::move(fade_table);
@@ -570,7 +455,7 @@ void Processor::prepare(const ProcessorConfig& config)
   p.max_block = config.max_block;
   p.engine_block = engine_block;
   p.model_hz = static_cast<int>(model_hz);
-  p.latency = rc_lat + os_lat_host;
+  p.latency = p.converter ? p.converter->latency_samples() : 0;
   p.variant.store(static_cast<int>(variant));
   p.completed.store(0);
   p.dropped.store(0);
@@ -597,15 +482,10 @@ void Processor::reset()
     return;
   p.discard_swaps();
   p.generation.fetch_add(1); // tickets made before the reset belong to the old history
-  for (int i = 0; i < p.os_factor; ++i)
-  {
-    for (auto& h : p.history[static_cast<std::size_t>(i)])
-      h.store(0.0f, std::memory_order_relaxed);
-    p.active->engines[static_cast<std::size_t>(i)]->reset(p.engine_block);
-  }
+  for (auto& h : p.history)
+    h.store(0.0f, std::memory_order_relaxed);
   p.history_pos.store(0);
-  if (p.oversampler)
-    p.oversampler->reset();
+  p.active->engine->reset(p.engine_block);
   if (p.converter)
     p.converter->reset();
 }
@@ -700,42 +580,29 @@ SwapTicket Processor::Impl::make_ticket(std::shared_ptr<const Model> target, Var
                                           " Hz of the running model; models of different sample rates cannot be swapped");
 
   const std::uint64_t made_for = p.generation.load();
-  const int phases = p.os_factor;
   const Variant use = usable_variant(*target, wanted);
   const Model::Impl& m = *target->impl_;
-  const A2Weights& weights = (use == Variant::Full) ? *m.full : *m.lite;
   auto slot = std::make_unique<Slot>();
   slot->model = target;
   slot->variant = use;
-  slot->num_engines = phases;
-  for (int i = 0; i < phases; ++i)
-    slot->engines[static_cast<std::size_t>(i)] = make_engine(weights, p.engine_block);
+  slot->engine = make_engine(use == Variant::Full ? *m.full : *m.lite, p.engine_block);
   slot->generation = made_for;
   slot->owner = this;
 
-  // Replay the recent input for every phase, so that the engine(s) get the state of the running one(s). The audio thread keeps
-  // writing, so a copy is checked after it was made, and made again if the audio thread has overtaken it.
+  // Replay the recent input, so that the engine gets the state of the running one. The audio thread keeps writing, so a copy is checked
+  // after it was made, and made again if the audio thread has overtaken it.
   const std::uint64_t replay = static_cast<std::uint64_t>(a2_receptive_field() + kReplayExtra);
-  std::array<std::vector<float>, kMaxPhases> local;
-  for (int i = 0; i < phases; ++i)
-    local[static_cast<std::size_t>(i)].resize(kHistoryCapacity);
+  std::vector<float> local(kHistoryCapacity);
   std::vector<float> sink(static_cast<std::size_t>(p.engine_block));
-  auto copy_all = [&](std::uint64_t from, std::uint64_t to) {
-    for (int i = 0; i < phases; ++i)
-      if (!p.copy_history(i, from, to, local[static_cast<std::size_t>(i)].data()))
-        return false;
-    return true;
-  };
   std::uint64_t reached = 0;
   bool replayed = false;
   for (int attempt = 0; attempt < 8 && !replayed; ++attempt)
   {
     const std::uint64_t end = p.history_pos.load(std::memory_order_acquire);
     const std::uint64_t start = end > replay ? end - replay : 0;
-    if (!copy_all(start, end))
+    if (!p.copy_history(start, end, local.data()))
       continue;
-    for (int i = 0; i < phases; ++i)
-      p.feed(*slot->engines[static_cast<std::size_t>(i)], local[static_cast<std::size_t>(i)].data(), static_cast<std::size_t>(end - start), sink.data());
+    p.feed(*slot->engine, local.data(), static_cast<std::size_t>(end - start), sink.data());
     reached = end;
     replayed = true;
   }
@@ -746,10 +613,9 @@ SwapTicket Processor::Impl::make_ticket(std::shared_ptr<const Model> target, Var
     const std::uint64_t end = p.history_pos.load(std::memory_order_acquire);
     if (end - reached <= kCatchUpTarget)
       break;
-    if (end - reached > kHistoryCapacity / 2 || !copy_all(reached, end))
+    if (end - reached > kHistoryCapacity / 2 || !p.copy_history(reached, end, local.data()))
       continue;
-    for (int i = 0; i < phases; ++i)
-      p.feed(*slot->engines[static_cast<std::size_t>(i)], local[static_cast<std::size_t>(i)].data(), static_cast<std::size_t>(end - reached), sink.data());
+    p.feed(*slot->engine, local.data(), static_cast<std::size_t>(end - reached), sink.data());
     reached = end;
   }
   slot->history_end = reached;

@@ -7,7 +7,7 @@ All names are in the namespace `namturbo`. Include everything with `#include "na
 | `namturbo/error.h` | `ErrorCode`, `Error` |
 | `namturbo/cpu.h` | `CpuSupport`, `check_cpu` |
 | `namturbo/model.h` | `Variant`, `ModelInfo`, `Model` |
-| `namturbo/processor.h` | `ResamplerQuality`, `Oversampling`, `PerfStats`, `AdaptiveConfig`, `ProcessorConfig`, `SwapTicket`, `Processor` |
+| `namturbo/processor.h` | `ResamplerQuality`, `PerfStats`, `AdaptiveConfig`, `ProcessorConfig`, `SwapTicket`, `Processor` |
 | `namturbo/version.h` | `Version`, `kVersion`, `kPreRelease`, `version`, `version_string` |
 
 For an explanation of how to use these in a plug-in, read the [integration guide](integration-guide.md) first.
@@ -134,16 +134,6 @@ How the signal is converted when the host rate differs from the rate of the mode
 
 Below 44.1 kHz the delay is longer in milliseconds (3.8 ms at 32 kHz and 5.6 ms at 22.05 kHz for `Standard`).
 
-### `enum class Oversampling`
-
-Optional phase-interleaved oversampling around the A2 network, using linear-phase half-band FIR filters with the quality preset of `ProcessorConfig::resampler`.
-
-| Value | Factor | Engine cost | Latency at 48 kHz (`Standard` / `LowLatency`) |
-|---|---|---|---|
-| `Off` | 1x | 1x | 0 / 0 samples |
-| `X2` | 2x | ~2x | 63 / 23 samples (1.31 / 0.48 ms) |
-| `X4` | 4x | ~4x | 71 / 29 samples (1.48 / 0.60 ms) |
-
 ### `struct PerfStats`
 
 The time that `process` takes, measured by the processor itself since `prepare` or the last `reset_stats`. A "call" is one call of
@@ -184,8 +174,7 @@ The thresholds must satisfy `0 < low_load < high_load`, `smoothing_ms > 0`, and 
 | `double sample_rate` | 48000 | Sample rate of the host: a whole number of Hz, 1000 to 2,000,000. |
 | `int max_block` | 1024 | Largest block passed to `process`, 1 to 65536. |
 | `Variant variant` | `Full` | The variant to run. If the model does not contain it, the other one is used. |
-| `ResamplerQuality resampler` | `Standard` | Quality preset for sample-rate conversion and oversampling. |
-| `Oversampling oversampling` | `Off` | Optional 2x or 4x phase-interleaved oversampling around the network. |
+| `ResamplerQuality resampler` | `Standard` | Used only if the host rate differs from the rate of the model. |
 | `bool monitoring` | `false` | Measure the time of every `process` call (two clock reads per call). |
 | `double swap_fade_ms` | 10 | Length of the cross-fade when the model or variant is swapped, 0 to 100 ms. 0 switches at once. |
 | `AdaptiveConfig adaptive` | off | See above. Can also be changed later with `set_adaptive`. |

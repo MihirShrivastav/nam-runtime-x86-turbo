@@ -51,7 +51,6 @@ void guide_check_and_load(const std::string& path)
   config.max_block = host_max_block();
   config.variant = namturbo::Variant::Full;
   config.resampler = namturbo::ResamplerQuality::LowLatency;
-  config.oversampling = namturbo::Oversampling::X2;
   config.monitoring = true;
   config.swap_fade_ms = 10.0;
   processor.prepare(config);

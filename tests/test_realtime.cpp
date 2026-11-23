@@ -143,66 +143,60 @@ void plain_processing(const std::shared_ptr<const Model>& model)
   std::printf("plain_processing\n");
   for (Variant v : {Variant::Full, Variant::Lite})
     for (double rate : {48000.0, 44100.0, 96000.0})
-      for (Oversampling os : {Oversampling::Off, Oversampling::X2, Oversampling::X4})
-      {
-        if (os != Oversampling::Off && rate == 96000.0 && v == Variant::Full)
-          continue; // covered by the other combinations
-        Processor p(model);
-        ProcessorConfig c;
-        c.sample_rate = rate;
-        c.max_block = 256;
-        c.variant = v;
-        c.oversampling = os;
-        c.monitoring = true;
-        p.prepare(c);
-        const unsigned long long e = run_audio(p, {1, 7, 64, 256, 0, 33, 1000, 5000}, 160); // 1000 and 5000 exceed max_block
-        std::printf("  %s %dx at %.0f Hz: %llu allocation events\n", v == Variant::Full ? "A2-Full" : "A2-Lite", int(os), rate, e);
-        CHECK(e == 0);
-      }
+    {
+      Processor p(model);
+      ProcessorConfig c;
+      c.sample_rate = rate;
+      c.max_block = 256;
+      c.variant = v;
+      c.monitoring = true;
+      p.prepare(c);
+      const unsigned long long e = run_audio(p, {1, 7, 64, 256, 0, 33, 1000, 5000}, 160); // 1000 and 5000 exceed max_block
+      std::printf("  %s at %.0f Hz: %llu allocation events\n", v == Variant::Full ? "A2-Full" : "A2-Lite", rate, e);
+      CHECK(e == 0);
+    }
 }
 
 void swaps_and_adaptive_mode(const std::shared_ptr<const Model>& model)
 {
   std::printf("swaps_and_adaptive_mode\n");
   for (double rate : {48000.0, 44100.0})
-    for (Oversampling os : {Oversampling::Off, Oversampling::X2})
+  {
+    Processor p(model);
+    ProcessorConfig c;
+    c.sample_rate = rate;
+    c.max_block = 128;
+    c.monitoring = true;
+    c.swap_fade_ms = 5.0;
+    c.adaptive.enabled = true;
+    c.adaptive.high_load = 1e-6; // the policy switches down at once and then stays
+    c.adaptive.low_load = 1e-9;
+    c.adaptive.down_after_ms = 0.0;
+    c.adaptive.up_after_ms = 0.0;
+    c.adaptive.smoothing_ms = 20.0;
+    p.prepare(c);
+    unsigned long long events = 0;
+    int taken = 0;
+    for (int round = 0; round < 12; ++round)
     {
-      Processor p(model);
-      ProcessorConfig c;
-      c.sample_rate = rate;
-      c.max_block = 128;
-      c.oversampling = os;
-      c.monitoring = true;
-      c.swap_fade_ms = 5.0;
-      c.adaptive.enabled = true;
-      c.adaptive.high_load = 1e-6; // the policy switches down at once and then stays
-      c.adaptive.low_load = 1e-9;
-      c.adaptive.down_after_ms = 0.0;
-      c.adaptive.up_after_ms = 0.0;
-      c.adaptive.smoothing_ms = 20.0;
-      p.prepare(c);
-      unsigned long long events = 0;
-      int taken = 0;
-      for (int round = 0; round < 12; ++round)
+      events += run_audio(p, {64, 128}, 40); // the adaptive policy runs in service(), outside the armed region
+      p.service();
+      const Variant want = (round % 2 == 0) ? Variant::Lite : Variant::Full;
+      SwapTicket t = p.prepare_swap(model, want);
+      if (p.commit_swap(std::move(t)))
       {
-        events += run_audio(p, {64, 128}, 40); // the adaptive policy runs in service(), outside the armed region
-        p.service();
-        const Variant want = (round % 2 == 0) ? Variant::Lite : Variant::Full;
-        SwapTicket t = p.prepare_swap(model, want);
-        if (p.commit_swap(std::move(t)))
-        {
-          // The audio thread takes the ticket, runs the catch-up, fades and retires the old engine: all armed.
-          events += run_audio(p, {16, 64, 128}, 60);
-          ++taken;
-        }
-        p.service();
+        // The audio thread takes the ticket, runs the catch-up, fades and retires the old engine: all armed.
+        events += run_audio(p, {16, 64, 128}, 60);
+        ++taken;
       }
-      std::printf("  %.0f Hz %dx: %d swaps taken in 12 rounds, %llu swaps completed, %llu allocation events on the audio thread\n", rate, int(os),
-                  taken, static_cast<unsigned long long>(p.swaps_completed()), events);
-      CHECK(taken >= 8);
-      CHECK(p.swaps_completed() >= 6);
-      CHECK(events == 0);
+      p.service();
     }
+    std::printf("  %.0f Hz: %d swaps taken in 12 rounds, %llu swaps completed, %llu allocation events on the audio thread\n", rate, taken,
+                static_cast<unsigned long long>(p.swaps_completed()), events);
+    CHECK(taken >= 8);
+    CHECK(p.swaps_completed() >= 6);
+    CHECK(events == 0);
+  }
 }
 
 void the_test_sees_an_allocation()

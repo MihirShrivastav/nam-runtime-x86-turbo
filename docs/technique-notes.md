@@ -76,25 +76,23 @@ produce them inside the network. During `process` the engines set the flush-to-z
 `engine_util.h`) and restore the previous state on return, so the floating-point state of the host is unchanged. The block time does not
 depend on the signal.
 
-## 5. Sample-rate conversion and oversampling (`resampler.cpp`)
+## 5. Sample-rate conversion (`resampler.cpp`)
 
-When the host rate differs from the rate of the model, two linear-phase FIR stages convert the signal: host rate to model rate before
-the network, model rate to host rate after it.
+When the host rate differs from the rate of the model, two rational polyphase filters convert the signal: host rate to model rate before
+the network, model rate to host rate after it. For a ratio `a/b` (reduced to lowest terms), a stage upsamples by `a`, applies a low-pass
+filter and downsamples by `b`; the polyphase form computes only the output samples that are kept, and each output sample is produced as
+soon as the input samples it needs have arrived, so the output does not depend on the block size.
 
-- **4x host rates (192 kHz).** Uses a two-stage hybrid cascade: a short symmetric half-band AVX2 outer stage (`HalfBandUp2x`,
-  `HalfBandDown2x`, 192 <-> 96 kHz, wide transition band) paired with a steep polyphase inner stage (96 <-> 48 kHz, stop-band at 24 kHz).
-- **General rational ratios (e.g. 44.1, 88.2, 96, 32 kHz).** For a reduced ratio `a/b` (numerator and denominator at most 2000), a polyphase
-  FIR stage computes only the retained output samples from a mirrored power-of-two input ring. Each phase is padded to a multiple of 8
-  taps and evaluated with a 4-accumulator AVX2 dot product plus an 8-wide tail. Both stages share one design grid so the total filter
-  delay is a whole number of host samples.
-- **Presets.** `Standard` has 96 dB attenuation and a flat band to 90% of the lower Nyquist frequency; `LowLatency` has 72 dB and 80%.
-- **Phase-interleaved oversampling (`Oversampler`).** Because an A2 WaveNet is a discrete-time filter bank trained at a fixed rate
-  (48 kHz), feeding a 96 kHz stream directly into it would shift every filter up by one octave. Instead, `Oversampling::X2` and
-  `Oversampling::X4` upsample the model-rate stream with half-band filters, split it into 2 or 4 phase-shifted 48 kHz streams, run an
-  independent A2 engine on each phase (mathematically identical to dilating all layer taps by the oversampling factor), and decimate back
-  to 48 kHz. In-band linear filter responses are preserved, while ultrasonic nonlinear harmonics reconstruct at their true frequencies
-  across the interleaved phases and are attenuated by the decimator. For 4x, a 1-sample alignment delay at the intermediate 2x rate makes
-  the round-trip latency an exact integer number of model-rate samples.
+- The filters are linear-phase Kaiser-window low-pass filters of odd length. `Standard` has 96 dB attenuation and a flat band to 90% of the
+  lower Nyquist frequency; `LowLatency` has 72 dB and 80%.
+- Both stages are designed on the same fine grid, and the centre of the second filter is chosen so that the sum of the two delays is a
+  whole number of host samples, so that `latency_samples()` is exact.
+- The inner product of a filter phase is an AVX2 dot product with several accumulators; the number of taps of each phase is a multiple of
+  32 so that no tail loop is needed.
+
+The ratio must reduce to a numerator and a denominator of at most 2000. The conversion costs time: on the AMD machine with MSVC at buffer 256,
+44.1 kHz needs roughly 15% more time than 48 kHz for A2-Full and roughly 65% more for A2-Lite, because the A2-Lite network is so cheap
+that the conversion costs a large part of it (see [results](RESULTS.md)).
 
 ## 6. Model swap (`processor.cpp`)
 
