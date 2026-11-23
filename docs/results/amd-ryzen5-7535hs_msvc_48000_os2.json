@@ -1,0 +1,22 @@
+{
+  "namturbo_version": "1.0.0",
+  "cpu": "AMD Ryzen 5 7535HS with Radeon Graphics",
+  "compiler": "MSVC 1944",
+  "host_rate": 48000,
+  "oversampling": 2,
+  "seconds": 3.00,
+  "runs": 5,
+  "pinned_core": 2,
+  "baseline": false,
+  "rows": [
+    {"model": "test-amp-and-cab.nam", "variant": "full", "buffer": 64, "block_us": 1333.333, "ours_p50_us": 39.000, "ours_p99_us": 61.775, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "test-amp-and-cab.nam", "variant": "full", "buffer": 128, "block_us": 2666.667, "ours_p50_us": 77.300, "ours_p99_us": 122.096, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "test-amp-and-cab.nam", "variant": "full", "buffer": 256, "block_us": 5333.333, "ours_p50_us": 150.400, "ours_p99_us": 230.651, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "test-amp-and-cab.nam", "variant": "full", "buffer": 512, "block_us": 10666.667, "ours_p50_us": 406.100, "ours_p99_us": 778.440, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "test-amp-and-cab.nam", "variant": "lite", "buffer": 64, "block_us": 1333.333, "ours_p50_us": 10.600, "ours_p99_us": 21.653, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "test-amp-and-cab.nam", "variant": "lite", "buffer": 128, "block_us": 2666.667, "ours_p50_us": 20.500, "ours_p99_us": 36.904, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "test-amp-and-cab.nam", "variant": "lite", "buffer": 256, "block_us": 5333.333, "ours_p50_us": 39.400, "ours_p99_us": 76.950, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000},
+    {"model": "test-amp-and-cab.nam", "variant": "lite", "buffer": 512, "block_us": 10666.667, "ours_p50_us": 71.400, "ours_p99_us": 150.500, "base_p50_us": 0.000, "base_p99_us": 0.000, "speedup": 0.0000}
+  ],
+  "esr_db": []
+}

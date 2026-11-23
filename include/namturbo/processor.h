@@ -18,6 +18,15 @@ enum class ResamplerQuality
   LowLatency  // 72 dB attenuation, flat up to 80% of the lower Nyquist frequency; the delay is 0.9 to 1.0 ms at host rates of 44.1 kHz and above
 };
 
+// Phase-interleaved oversampling around the A2 network to suppress nonlinear aliasing while preserving the model's in-band
+// frequency response. Uses linear-phase half-band FIR filters configured by ProcessorConfig::resampler.
+enum class Oversampling
+{
+  Off = 1, // 1x: no oversampling (default)
+  X2 = 2,  // 2x: two interleaved phases (about 2x engine cost; 63 or 23 model-rate samples of latency)
+  X4 = 4   // 4x: four interleaved phases (about 4x engine cost; 71 or 29 model-rate samples of latency)
+};
+
 // How long process() takes, measured by the processor itself since prepare() or the last reset_stats(). A "call" is one call of
 // process(); its "block" is the n samples of that call, which last n / sample rate seconds. The load of a call is its time divided
 // by the duration of its block: 1.0 means that it took all the time it had.
@@ -53,7 +62,8 @@ struct ProcessorConfig
   double sample_rate = 48000.0;      // the sample rate of the host: a whole number of Hz
   int max_block = 1024;              // the largest block the host passes to process(), 1 to 65536
   Variant variant = Variant::Full;   // the variant to run; if the model does not contain it, the other one is used
-  ResamplerQuality resampler = ResamplerQuality::Standard; // used only if the host rate differs from the model rate
+  ResamplerQuality resampler = ResamplerQuality::Standard; // quality preset for sample-rate conversion and oversampling
+  Oversampling oversampling = Oversampling::Off;           // optional 2x or 4x phase-interleaved oversampling around the network
   bool monitoring = false;           // measure the time of every process() call (two clock reads per call); see stats()
   double swap_fade_ms = 10.0;        // length of the cross-fade when the model or variant is swapped (0 to 100 ms; 0 switches at once)
   AdaptiveConfig adaptive;           // see AdaptiveConfig; can also be changed later with set_adaptive()
@@ -112,9 +122,9 @@ public:
   void process(const float* in, float* out, int n) noexcept;
   void process(const double* in, double* out, int n) noexcept;
 
-  // The delay, in samples of the host, that the processor adds to the signal. It is 0 if the host rate equals the rate of the model.
-  // Otherwise it is the exact delay of the sample-rate conversion (a whole number of host samples, measured by the tests),
-  // which a host can use to compensate the delay of a parallel path. It is fixed after prepare().
+  // The delay, in samples of the host, that the processor adds to the signal. It is 0 if the host rate equals the rate of the model
+  // and oversampling is Off. Otherwise it is the delay of sample-rate conversion and oversampling (exact integer when the host rate
+  // is a multiple of the model rate or oversampling is Off; rounded to the nearest host sample otherwise). Fixed after prepare().
   int latency_samples() const noexcept;
 
   // The variant that is running now (the one that prepare() selected, or the one of the last swap that has finished its fade).
