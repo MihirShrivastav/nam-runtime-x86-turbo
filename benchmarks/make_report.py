@@ -52,6 +52,10 @@ def has_baseline(data):
     return bool(data.get("baseline"))
 
 
+def os_factor(data):
+    return int(data.get("oversampling", 1))
+
+
 def variant_name(variant):
     return "A2-Full" if variant == "full" else "A2-Lite"
 
@@ -65,7 +69,7 @@ def machine_order(files):
 
 
 def speedup_tables(files, model, rate=48000):
-    based = [d for d in files if has_baseline(d) and int(d["host_rate"]) == rate]
+    based = [d for d in files if has_baseline(d) and int(d["host_rate"]) == rate and os_factor(d) == 1]
     if not based:
         return []
     buffers = sorted({r["buffer"] for d in based for r in d["rows"] if r["model"] == model})
@@ -83,17 +87,18 @@ def speedup_tables(files, model, rate=48000):
 
 
 def load_tables(files, model):
-    rates = sorted({int(d["host_rate"]) for d in files})
-    buffers = sorted({r["buffer"] for d in files for r in d["rows"] if r["model"] == model})
+    plain = [d for d in files if os_factor(d) == 1]
+    rates = sorted({int(d["host_rate"]) for d in plain})
+    buffers = sorted({r["buffer"] for d in plain for r in d["rows"] if r["model"] == model})
     out = []
     for variant in ("full", "lite"):
         out.append(f"**{variant_name(variant)}**: load at the median block time (buffer size in samples)")
         out.append("")
         out.append("| Machine and compiler | Host rate | " + " | ".join(str(b) for b in buffers) + " |")
         out.append("|---|---:|" + "---:|" * len(buffers))
-        for lab in machine_order(files):
+        for lab in machine_order(plain):
             for rate in rates:
-                for d in files:
+                for d in plain:
                     if label(d) != lab or int(d["host_rate"]) != rate:
                         continue
                     by = {r["buffer"]: r for r in d["rows"] if r["model"] == model and r["variant"] == variant}
@@ -103,8 +108,33 @@ def load_tables(files, model):
     return out
 
 
+def oversampling_tables(files, model):
+    oversampled = [d for d in files if os_factor(d) > 1]
+    if not oversampled:
+        return []
+    factors = sorted({os_factor(d) for d in oversampled})
+    buffers = sorted({r["buffer"] for d in oversampled for r in d["rows"] if r["model"] == model})
+    out = []
+    for variant in ("full", "lite"):
+        out.append(f"**{variant_name(variant)}**: load at the median block time with oversampling at 48 kHz (buffer size in samples)")
+        out.append("")
+        out.append("| Machine and compiler | Oversampling | " + " | ".join(str(b) for b in buffers) + " |")
+        out.append("|---|---:|" + "---:|" * len(buffers))
+        for lab in machine_order(oversampled):
+            for factor in factors:
+                for d in oversampled:
+                    if label(d) != lab or os_factor(d) != factor:
+                        continue
+                    by = {r["buffer"]: r for r in d["rows"] if r["model"] == model and r["variant"] == variant}
+                    cells = [f'{100.0 * by[b]["ours_p50_us"] / by[b]["block_us"]:.2f}%' if b in by else "" for b in buffers]
+                    out.append(f"| {lab} | {factor}x | " + " | ".join(cells) + " |")
+        out.append("")
+    return out
+
+
 def detail_section(data):
-    out = [f"### {label(data)}, host rate {data['host_rate'] / 1000:g} kHz", ""]
+    os_suffix = f", {os_factor(data)}x oversampling" if os_factor(data) > 1 else ""
+    out = [f"### {label(data)}, host rate {data['host_rate'] / 1000:g} kHz{os_suffix}", ""]
     pin = f'thread pinned to logical core {data["pinned_core"]}' if data.get("pinned_core", -1) >= 0 else "thread not pinned"
     out.append(f'{data["seconds"]:.0f} s of audio per run, median of {data["runs"]} runs; {pin}.')
     out.append("")
@@ -174,9 +204,14 @@ def main():
     out += speedup_tables(files, model)
     out += ["## Share of the real-time budget used by namturbo", "",
             "Load is the time to process a block divided by the duration of the block. 1% means that the processor is busy for 1% of the time "
-            "that the audio takes. NAM Core has no sample-rate conversion, so there is no comparison at 44.1 and 96 kHz; the load there includes "
+            "that the audio takes. NAM Core has no sample-rate conversion, so there is no comparison at 44.1, 96 and 192 kHz; the load there includes "
             "the conversion.", ""]
     out += load_tables(files, model)
+    os_section = oversampling_tables(files, model)
+    if os_section:
+        out += ["## Oversampling at 48 kHz", "",
+                "Load with 2x and 4x phase-interleaved oversampling (`Standard` half-band filters, 48 kHz host rate).", ""]
+        out += os_section
     if a.soak:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
         from soak_table import parse, table_lines
