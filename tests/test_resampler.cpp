@@ -294,6 +294,162 @@ static void tones_pass_and_alias_images_are_rejected()
   }
 }
 
+static void halfband_design_and_accuracy()
+{
+  std::printf("halfband_design_and_accuracy\n");
+  struct Spec
+  {
+    double attenuation, pass;
+  };
+  for (Spec spec : {Spec{96.0, 0.90}, Spec{72.0, 0.80}, Spec{96.0, 0.50}})
+  {
+    const std::vector<double> h = design_halfband(spec.attenuation, spec.pass);
+    const int n = int(h.size());
+    const int c = (n - 1) / 2;
+    CHECK((n + 1) % 4 == 0 && c % 2 == 1);
+    CHECK(std::fabs(h[size_t(c)] - 0.5) < 1e-12);
+    double sum = 0.0;
+    bool symmetric = true, even_zero = true;
+    for (int i = 0; i < n; ++i)
+    {
+      sum += h[size_t(i)];
+      symmetric = symmetric && (h[size_t(i)] == h[size_t(n - 1 - i)]);
+      if (i != c && ((i - c) & 1) == 0)
+        even_zero = even_zero && (h[size_t(i)] == 0.0);
+    }
+    CHECK(std::fabs(sum - 1.0) < 1e-12 && symmetric && even_zero);
+
+    const double f_pass = 0.25 * spec.pass;
+    const double f_stop = 0.5 - f_pass;
+    double worst_ripple = 0.0, worst_stop = 0.0;
+    for (int i = 0; i <= 200; ++i)
+      worst_ripple = std::max(worst_ripple, std::fabs(db(response(h, f_pass * i / 200.0))));
+    for (int i = 0; i <= 200; ++i)
+      worst_stop = std::max(worst_stop, response(h, f_stop + (0.5 - f_stop) * i / 200.0));
+    std::printf("  halfband %.0f dB, pass %.2f: %d taps (%d pairs), ripple %.5f dB, stop %.1f dB\n", spec.attenuation, spec.pass, n, (n + 1) / 4,
+                worst_ripple, db(worst_stop));
+    CHECK(worst_ripple < 0.01);
+    CHECK(db(worst_stop) < -(spec.attenuation - 3.0));
+
+    // Verify HalfBandUp2x and HalfBandDown2x against direct double-precision convolution with random block splits.
+    std::mt19937 rng(11);
+    std::uniform_real_distribution<float> dist(-0.5f, 0.5f);
+    std::vector<float> in(2048);
+    for (float& v : in)
+      v = dist(rng);
+
+    HalfBandUp2x up(h, 256);
+    std::vector<float> up_out(in.size() * 2);
+    std::uniform_int_distribution<int> bdist(1, 300);
+    for (size_t pos = 0; pos < in.size();)
+    {
+      const int k = int(std::min<size_t>(size_t(bdist(rng)), in.size() - pos));
+      up.process_interleaved(in.data() + pos, k, up_out.data() + 2 * pos);
+      pos += size_t(k);
+    }
+    double err_u = 0.0, pow_u = 0.0;
+    for (size_t m = 0; m < up_out.size(); ++m)
+    {
+      double y = 0.0;
+      for (int j = 0; j < n && int(m) - j >= 0; ++j)
+      {
+        const int idx = int(m) - j;
+        if ((idx & 1) == 0)
+          y += 2.0 * h[size_t(j)] * double(in[size_t(idx / 2)]);
+      }
+      err_u += (double(up_out[m]) - y) * (double(up_out[m]) - y);
+      pow_u += y * y;
+    }
+    CHECK(10.0 * std::log10(err_u / pow_u) < -120.0);
+
+    HalfBandDown2x dn(h, 256);
+    std::vector<float> dn_out(up_out.size());
+    size_t produced = 0;
+    for (size_t pos = 0; pos < up_out.size();)
+    {
+      const int k = int(std::min<size_t>(size_t(bdist(rng)), up_out.size() - pos));
+      produced += size_t(dn.process_interleaved(up_out.data() + pos, k, dn_out.data() + produced));
+      pos += size_t(k);
+    }
+    CHECK(produced == in.size());
+    double err_d = 0.0, pow_d = 0.0;
+    for (size_t m = 0; m < produced; ++m)
+    {
+      double y = 0.0;
+      for (int j = 0; j < n && int(2 * m) - j >= 0; ++j)
+        y += h[size_t(j)] * double(up_out[size_t(2 * m - size_t(j))]);
+      err_d += (double(dn_out[m]) - y) * (double(dn_out[m]) - y);
+      pow_d += y * y;
+    }
+    CHECK(10.0 * std::log10(err_d / pow_d) < -120.0);
+  }
+}
+
+static void oversampler_round_trip_and_block_independence()
+{
+  std::printf("oversampler_round_trip_and_block_independence\n");
+  for (ResamplerQuality q : {ResamplerQuality::Standard, ResamplerQuality::LowLatency})
+    for (int factor : {2, 4})
+    {
+      const double pass = (q == ResamplerQuality::Standard ? 0.90 : 0.80) * 24000.0;
+      std::mt19937 rng(19);
+      std::uniform_real_distribution<double> u(0.0, 1.0);
+      std::vector<float> in(32000, 0.0f);
+      std::vector<double> acc(in.size(), 0.0);
+      for (int k = 0; k < 120; ++k)
+      {
+        const double f = 50.0 + (0.85 * pass - 50.0) * u(rng), ph = 2.0 * kPi * u(rng);
+        for (size_t i = 0; i < in.size(); ++i)
+          acc[i] += 0.002 * std::sin(2.0 * kPi * f * double(i) / 48000.0 + ph);
+      }
+      for (size_t i = 0; i < in.size(); ++i)
+        in[i] = float(acc[i]);
+
+      auto run = [&](int max_block, bool random_blocks) {
+        Oversampler os(factor, max_block, q);
+        std::vector<float> out(in.size());
+        std::vector<float> ph[4];
+        float* ptrs[4] = {};
+        const float* cptrs[4] = {};
+        for (int p = 0; p < factor; ++p)
+        {
+          ph[p].resize(size_t(max_block));
+          ptrs[p] = ph[p].data();
+          cptrs[p] = ph[p].data();
+        }
+        std::mt19937 brng(31);
+        std::uniform_int_distribution<int> bdist(1, max_block);
+        for (size_t pos = 0; pos < in.size();)
+        {
+          const int k = int(std::min<size_t>(size_t(random_blocks ? bdist(brng) : max_block), in.size() - pos));
+          os.upsample(in.data() + pos, k, ptrs);
+          os.downsample(cptrs, k, out.data() + pos);
+          pos += size_t(k);
+        }
+        return std::make_pair(out, os.latency_samples());
+      };
+
+      const auto [out_whole, D] = run(512, false);
+      const auto [out_rand, D2] = run(256, true);
+      const auto [out_one, D3] = run(1, false);
+      CHECK(D == D2 && D == D3);
+      CHECK(out_whole == out_rand && out_whole == out_one);
+
+      const size_t from = size_t(D) * 2 + 1000, to = in.size() - size_t(D) - 100;
+      double err = 0.0, pow = 0.0;
+      for (size_t k = from; k < to; ++k)
+      {
+        const double e = double(out_whole[k + size_t(D)]) - double(in[k]);
+        err += e * e;
+        pow += double(in[k]) * double(in[k]);
+      }
+      const double esr = 10.0 * std::log10(err / pow);
+      std::printf("  %-10s %dx: latency %3d samples (%.2f ms), round-trip error %.1f dB, block-split bit-identical\n", quality_name(q), factor, D,
+                  1000.0 * D / 48000.0, esr);
+      CHECK(esr < (q == ResamplerQuality::Standard ? -90.0 : -65.0));
+    }
+}
+
 static void unsupported_ratios_and_bad_arguments()
 {
   std::printf("unsupported_ratios_and_bad_arguments\n");
@@ -337,6 +493,8 @@ int main()
     return 77;
   }
   guarded("filter_design_meets_its_targets", filter_design_meets_its_targets);
+  guarded("halfband_design_and_accuracy", halfband_design_and_accuracy);
+  guarded("oversampler_round_trip_and_block_independence", oversampler_round_trip_and_block_independence);
   guarded("polyphase_equals_direct_convolution", polyphase_equals_direct_convolution);
   guarded("round_trip_latency_is_exact_and_flat", round_trip_latency_is_exact_and_flat);
   guarded("tones_pass_and_alias_images_are_rejected", tones_pass_and_alias_images_are_rejected);
