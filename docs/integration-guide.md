@@ -95,7 +95,8 @@ It can be called again when the sample rate or the block size changes; the state
 | `sample_rate` | Host sample rate in Hz, a whole number from 1000 to 2,000,000. | 48000 |
 | `max_block` | Largest block passed to `process`, 1 to 65536. | 1024 |
 | `variant` | `Variant::Full` or `Variant::Lite`. If the model does not contain it, the other variant is used. | Full |
-| `resampler` | `Standard` (about 2.7 ms delay) or `LowLatency` (about 1 ms, lower attenuation). Used only if the host rate differs from the model rate. | Standard |
+| `resampler` | `Standard` (96 dB attenuation) or `LowLatency` (72 dB). Applies to sample-rate conversion and oversampling. | Standard |
+| `oversampling` | `Oversampling::Off`, `X2`, or `X4` phase-interleaved oversampling around the network. | Off |
 | `monitoring` | Measure the time of every `process` call. | off |
 | `swap_fade_ms` | Cross-fade length for swaps, 0 to 100 ms. | 10 |
 | `adaptive` | Automatic variant switching. See section 9. | off |
@@ -119,19 +120,28 @@ processor.process(input, output, num_samples);
 
 ### Latency
 
-The latency is 0 if the host rate equals the model rate (normally 48 kHz). Otherwise `processor.latency_samples()` returns the exact delay of
-the sample-rate conversion in host samples:
+The latency is 0 if the host rate equals the model rate (normally 48 kHz) and `oversampling` is `Off`. Otherwise
+`processor.latency_samples()` returns the delay of sample-rate conversion and oversampling in host samples:
 
 ```cpp
 setLatencySamples(processor.latency_samples());   // for example, in JUCE
 ```
+
+Sample-rate conversion (`Oversampling::Off`, 48 kHz model):
 
 | Host rate | `Standard` | `LowLatency` |
 |---|---|---|
 | 44.1 kHz | 123 samples (2.79 ms) | 45 samples (1.02 ms) |
 | 88.2 kHz | 226 samples (2.56 ms) | 82 samples (0.93 ms) |
 | 96 kHz | 246 samples (2.56 ms) | 90 samples (0.94 ms) |
-| 192 kHz | 492 samples (2.56 ms) | 180 samples (0.94 ms) |
+| 192 kHz | 530 samples (2.76 ms) | 206 samples (1.07 ms) |
+
+Oversampling at 48 kHz:
+
+| Mode | `Standard` | `LowLatency` |
+|---|---|---|
+| `Oversampling::X2` | 63 samples (1.31 ms) | 23 samples (0.48 ms) |
+| `Oversampling::X4` | 71 samples (1.48 ms) | 29 samples (0.60 ms) |
 
 ### Stereo
 
