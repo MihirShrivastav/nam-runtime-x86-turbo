@@ -193,8 +193,7 @@ double esr_db(const std::vector<double>& a, const std::vector<double>& b)
 void usage()
 {
   std::cerr << "usage: nam_bench --model <a2.nam> [--model ...] [--buffers 16,32,...] [--variants full,lite] [--runs N]\n"
-               "                 [--seconds S] [--host-rate HZ] [--oversampling 1|2|4] [--resampler standard|low-latency]\n"
-               "                 [--core N] [--json FILE]\n";
+               "                 [--seconds S] [--host-rate HZ] [--core N] [--json FILE]\n";
 }
 } // namespace
 
@@ -203,8 +202,7 @@ int main(int argc, char** argv)
   std::vector<std::string> models;
   std::vector<int> buffers = {16, 32, 64, 128, 256, 512};
   std::string variants = "full,lite";
-  int runs = 3, core = -1, os_factor = 1;
-  ResamplerQuality resampler_q = ResamplerQuality::Standard;
+  int runs = 3, core = -1;
   std::string json_path, input_path;
   double seconds = 2.0, host_rate = 48000.0;
   for (int i = 1; i < argc; ++i)
@@ -224,18 +222,6 @@ int main(int argc, char** argv)
     else if (a == "--runs") runs = std::atoi(next().c_str());
     else if (a == "--seconds") seconds = std::atof(next().c_str());
     else if (a == "--host-rate") host_rate = std::atof(next().c_str());
-    else if (a == "--oversampling") os_factor = std::atoi(next().c_str());
-    else if (a == "--resampler")
-    {
-      const std::string q = next();
-      if (q == "standard") resampler_q = ResamplerQuality::Standard;
-      else if (q == "low-latency") resampler_q = ResamplerQuality::LowLatency;
-      else
-      {
-        usage();
-        return 2;
-      }
-    }
     else if (a == "--core") core = std::atoi(next().c_str());
     else if (a == "--json") json_path = next();
     else if (a == "--input") input_path = next();
@@ -245,12 +231,11 @@ int main(int argc, char** argv)
       return 2;
     }
   }
-  if (models.empty() || buffers.empty() || runs < 1 || seconds <= 0.0 || (os_factor != 1 && os_factor != 2 && os_factor != 4))
+  if (models.empty() || buffers.empty() || runs < 1 || seconds <= 0.0)
   {
     usage();
     return 2;
   }
-  const Oversampling os_mode = os_factor == 4 ? Oversampling::X4 : (os_factor == 2 ? Oversampling::X2 : Oversampling::Off);
   try
   {
     const CpuSupport cpu = check_cpu();
@@ -305,15 +290,13 @@ int main(int argc, char** argv)
 
 #ifdef NAMTURBO_WITH_NAMCORE
         // Correctness gate: our output against NAM Core's fast path on one second of the signal, blocks of 64.
-        if (host_rate == model->info().sample_rate && os_mode == Oversampling::Off)
+        if (host_rate == model->info().sample_rate)
         {
           Processor p(model);
           ProcessorConfig c;
           c.sample_rate = host_rate;
           c.max_block = 64;
           c.variant = variant;
-          c.resampler = resampler_q;
-          c.oversampling = os_mode;
           p.prepare(c);
           NamCoreModel ref = make_nam_core_dsp(path, slim, "fast");
           ref.dsp->Reset(ref.sample_rate, 64);
@@ -350,14 +333,12 @@ int main(int argc, char** argv)
             c.sample_rate = host_rate;
             c.max_block = buffer;
             c.variant = variant;
-            c.resampler = resampler_q;
-            c.oversampling = os_mode;
             p.prepare(c);
             const Times ours = time_blocks([&](const double* i, double* o, int n) { p.process(i, o, n); }, in, out, buffer);
             o50.push_back(ours.p50);
             o99.push_back(ours.p99);
 #ifdef NAMTURBO_WITH_NAMCORE
-            if (host_rate == model->info().sample_rate && os_mode == Oversampling::Off)
+            if (host_rate == model->info().sample_rate)
             {
               NamCoreModel m = make_nam_core_dsp(path, slim, "fast");
               m.dsp->Reset(m.sample_rate, buffer);
@@ -387,12 +368,8 @@ int main(int argc, char** argv)
       }
     }
 
-    if (os_factor > 1)
-      std::printf("namturbo %s, %.0f Hz host rate, %dx oversampling, %.1f s of audio, median of %d run%s\n\n", version_string(), host_rate, os_factor,
-                  seconds, runs, runs == 1 ? "" : "s");
-    else
-      std::printf("namturbo %s, %.0f Hz host rate, %.1f s of audio, median of %d run%s\n\n", version_string(), host_rate, seconds, runs,
-                  runs == 1 ? "" : "s");
+    std::printf("namturbo %s, %.0f Hz host rate, %.1f s of audio, median of %d run%s\n\n", version_string(), host_rate, seconds, runs,
+                runs == 1 ? "" : "s");
     const bool base = std::any_of(rows.begin(), rows.end(), [](const Row& r) { return r.speedup > 0.0; });
     if (base)
       std::printf("| Model | Variant | Buffer | Ours p50 (us) | Ours p99 (us) | NAM Core p50 (us) | NAM Core p99 (us) | Speed-up | Real-time factor |\n"
@@ -418,8 +395,8 @@ int main(int argc, char** argv)
       }
       std::fprintf(f, "{\n  \"namturbo_version\": %s,\n  \"cpu\": %s,\n  \"compiler\": %s,\n", json_text(version_string()).c_str(),
                    json_text(cpu_name()).c_str(), json_text(compiler_name()).c_str());
-      std::fprintf(f, "  \"host_rate\": %.0f,\n  \"oversampling\": %d,\n  \"seconds\": %.2f,\n  \"runs\": %d,\n  \"pinned_core\": %d,\n  \"baseline\": %s,\n  \"rows\": [\n",
-                   host_rate, os_factor, seconds, runs, core, base ? "true" : "false");
+      std::fprintf(f, "  \"host_rate\": %.0f,\n  \"seconds\": %.2f,\n  \"runs\": %d,\n  \"pinned_core\": %d,\n  \"baseline\": %s,\n  \"rows\": [\n",
+                   host_rate, seconds, runs, core, base ? "true" : "false");
       for (size_t i = 0; i < rows.size(); ++i)
       {
         const Row& r = rows[i];

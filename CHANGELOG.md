@@ -7,20 +7,6 @@ The version is defined in `include/namturbo/version.h`.
 
 ## [Unreleased]
 
-## [1.1.0] - 2026-11-23
-
-### Added
-
-- Optional 2x and 4x phase-interleaved oversampling (`Oversampling::Off`, `Oversampling::X2`, `Oversampling::X4`) in `ProcessorConfig`,
-  using linear-phase symmetric half-band AVX2 FIR filters with exact latency reporting and click-free swap support.
-- `--oversampling 1|2|4` and `--resampler standard|low-latency` options in `nam_bench`.
-
-### Changed
-
-- Sample-rate converter (`src/resampler.cpp`) now uses a hybrid half-band + polyphase cascade for 4x host-to-model ratios (192 kHz),
-  mirrored power-of-two input rings instead of per-block `memmove`, 8-wide phase padding in rational polyphase stages, and block `memcpy`
-  in the output FIFO.
-
 ## [1.0.0] - 2026-11-22
 
 First stable release. It has the content of the release candidate 1.0.0-rc.1; only the version number differs.

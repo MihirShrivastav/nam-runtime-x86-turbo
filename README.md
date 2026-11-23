@@ -14,8 +14,8 @@ The interface consists of `Model` (immutable weights loaded from a `.nam` file) 
 
 - A2-Full (8 channels) and A2-Lite (3 channels), from plain or slimmable model files.
 - Float and double buffers. Block sizes from 1 sample. The output does not depend on the block partitioning.
-- Built-in sample-rate conversion (polyphase FIR and hybrid half-band cascades, two quality settings) for host rates other than the model
-  rate, plus optional 2x and 4x phase-interleaved oversampling around the network. The latency is reported in samples.
+- Built-in sample-rate conversion (polyphase FIR, two quality settings) for host rates other than the model rate. The latency is exact and
+  reported in samples.
 - Model and variant swap during processing, with a cross-fade. Preparation takes place on a control thread.
 - Optional automatic switch between A2-Full and A2-Lite, driven by the measured load.
 - Per-block timing statistics (mean, 99th percentile, maximum, missed deadlines), readable from any thread.
@@ -60,18 +60,9 @@ Speed-up over the NAM Core A2 fast path, 48 kHz, model `test-amp-and-cab.nam`, m
 |---|---:|---:|---:|---:|
 | AMD Ryzen 5 7535HS, clang-cl 19.1.5 | 4.6x | 5.1x | 5.4x | 5.2x |
 | AMD Ryzen 5 7535HS, MSVC 19.44 | 5.6x | 6.4x | 6.9x | 7.1x |
-| Intel Core Ultra 5 245K, MSVC 19.44 | 5.4x | 5.8x | 6.4x | 6.4x |
+| Intel Core Ultra 5 245K, MSVC 19.44 | 5.4x | 5.8x | 6.4x | 6.5x |
 
 <!-- results:end -->
-
-**Oversampling.** Because the 1x engine uses a fraction of the time of NAM Core, that headroom, for instance, can be spent on phase-interleaved oversampling
-to suppress nonlinear aliasing on high-gain amplifiers and distortion pedals without exceeding the cost of NAM Core at 1x. At 48 kHz with
-`Standard` half-band filters (MSVC 19.44, `test-amp-and-cab.nam`):
-
-- **A2-Full at 2x oversampling** is 1.2x to 1.7x faster than the NAM Core A2 fast path at 1x on both tested CPUs (2.0% to 2.1% load on Intel,
-  2.8% to 3.8% on AMD).
-- **A2-Lite at 2x oversampling** is 2.0x to 3.1x faster than NAM Core at 1x; **A2-Lite at 4x oversampling** remains 1.2x to 1.5x faster than
-  NAM Core at 1x on the Intel machine (0.8% to 1.0% load) and 1.1x to 1.2x faster at buffer sizes 128 to 512 on the AMD machine.
 
 Two instances on one audio thread (A2-Full with A2-Full, and A2-Full with A2-Lite), paced to real time, buffer sizes 64, 128 and 256, 60 s
 per setting: 0 of 157,500 blocks exceeded the deadline on each machine. The slowest block used 32% of the deadline on the AMD machine
@@ -158,9 +149,8 @@ See [docs/accuracy.md](docs/accuracy.md).
 - One processor handles one mono stream. A stereo signal uses two processors, which can share one `Model`.
 - A2-Lite has the level of A2-Full but a different waveform: for the model of this repository the error of A2-Lite against A2-Full is -12 dB
   to -17 dB (see [docs/accuracy.md](docs/accuracy.md)). Automatic switching to A2-Lite is disabled by default.
-- The sample-rate converter and oversampler are linear-phase. Sample-rate conversion delay is 2.6 ms to 2.8 ms (`Standard`) or about 1 ms
-  (`LowLatency`) at host rates of 44.1 kHz and above; 2x and 4x oversampling at 48 kHz add 63 / 71 samples (`Standard`) or 23 / 29 samples
-  (`LowLatency`).
+- The sample-rate converter is linear-phase. Its delay is 2.6 ms to 2.8 ms (Standard) or about 1 ms (LowLatency) at host rates of 44.1 kHz and
+  above. Oversampling around the network is not implemented.
 - The network runs at the sample rate of the model (normally 48 kHz). Other host rates are converted before and after the network.
 - Loudness and level metadata of a model file are reported in `ModelInfo` and are not applied to the signal.
 
