@@ -32,7 +32,10 @@ The interface consists of `Model` (immutable weights loaded from a `.nam` file) 
   branches.
 - **Two-level accumulation.** The products of one tap are summed first and then added to the running sum. Cost: about 3% of the block time.
   Effect: the rounding error is 7 dB lower (see [Accuracy](#accuracy)).
-- **Denormals.** FTZ and DAZ are set during `process` and the previous state is restored on return. The time per block does not depend on the signal.
+- **Denormals and idle silence.** FTZ and DAZ are set during `process` and the previous state is restored on return. After 6347 consecutive
+  exact-zero samples, silent blocks skip inference and output the exact steady-state silence value (bit-identical on wake-up).
+- **Shared prepacked weights.** Loaded models prepack weights once and share them read-only across stereo processors and 2x/4x oversampling
+  phases.
 - **Resampler.** Rational polyphase filters evaluate only the retained output samples, with AVX2 dot products. Both stages share one design
   grid, so that the total delay is an integer number of host samples.
 - **Audio thread.** Swaps are prepared on a control thread and published with a single atomic exchange. Retired engines are freed by
@@ -51,7 +54,7 @@ Speed-up over the NAM Core A2 fast path, 48 kHz, model `test-amp-and-cab.nam`, m
 | Machine and compiler | 64 | 128 | 256 | 512 |
 |---|---:|---:|---:|---:|
 | AMD Ryzen 5 7535HS, clang-cl 19.1.5 | 2.8x | 2.5x | 2.4x | 2.4x |
-| AMD Ryzen 5 7535HS, MSVC 19.44 | 3.5x | 3.1x | 3.0x | 3.1x |
+| AMD Ryzen 5 7535HS, MSVC 19.44 | 3.3x | 3.1x | 3.0x | 3.0x |
 | Intel Core Ultra 5 245K, MSVC 19.44 | 3.2x | 3.0x | 2.8x | 2.8x |
 
 **A2-Lite** (buffer size in samples)
@@ -59,8 +62,8 @@ Speed-up over the NAM Core A2 fast path, 48 kHz, model `test-amp-and-cab.nam`, m
 | Machine and compiler | 64 | 128 | 256 | 512 |
 |---|---:|---:|---:|---:|
 | AMD Ryzen 5 7535HS, clang-cl 19.1.5 | 4.6x | 5.1x | 5.4x | 5.2x |
-| AMD Ryzen 5 7535HS, MSVC 19.44 | 5.6x | 6.4x | 6.9x | 7.1x |
-| Intel Core Ultra 5 245K, MSVC 19.44 | 5.4x | 5.8x | 6.4x | 6.4x |
+| AMD Ryzen 5 7535HS, MSVC 19.44 | 5.5x | 6.3x | 6.6x | 6.6x |
+| Intel Core Ultra 5 245K, MSVC 19.44 | 5.4x | 5.8x | 6.4x | 6.5x |
 
 <!-- results:end -->
 

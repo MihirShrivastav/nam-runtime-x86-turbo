@@ -155,8 +155,9 @@ not run at the same time as `process`.
 ## 7. Gain staging
 
 The library does not change the signal level. A NAM model expects an input level close to the capture level. When present in the file,
-`model->info()` provides `loudness_db`, `input_level_dbu` and `output_level_dbu`. Their use (output normalization, input gain) is left
-to the plug-in.
+`model->info()` provides `loudness_db`, `input_level_dbu` and `output_level_dbu`, and `namturbo/model.h` provides pure helpers to compute
+the corresponding gains (`input_calibration_db`, `output_normalization_db`, `output_calibration_db`, `db_to_linear`). Applying them is
+left to the plug-in.
 
 ## 8. Swapping models and variants
 

@@ -67,6 +67,10 @@ void guide_check_and_load(const std::string& path)
   const namturbo::ModelInfo& info = model->info();
   (void)info.sample_rate;
   (void)info.loudness_db;
+  if (auto db = namturbo::input_calibration_db(info, 12.0))
+    (void)namturbo::db_to_linear(*db);
+  if (auto db = namturbo::output_normalization_db(info))
+    (void)namturbo::db_to_linear(*db);
   (void)model->has(namturbo::Variant::Lite);
 }
 

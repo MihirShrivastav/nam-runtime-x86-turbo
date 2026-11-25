@@ -7,6 +7,23 @@ The version is defined in `include/namturbo/version.h`.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-25
+
+### Added
+
+- Idle-silence fast path (`src/a2_avx2.cpp`, `src/a2_lite_avx2.cpp`): after 6347 consecutive exact `+0.0f` input samples, all-zero blocks
+  bypass the 23-layer forward pass and emit the exact steady-state silence output with bit-identical wake-up.
+- Pure, `noexcept` gain-staging helpers in `include/namturbo/model.h`: `db_to_linear`, `linear_to_db`, `input_calibration_db`,
+  `output_normalization_db`, and `output_calibration_db`.
+- `tests/test_idle_fastpath.cpp` verifying bit-exact silence/wake-up transitions, idle speedup, and early/late swaps.
+
+### Changed
+
+- Prepacked weights (`src/a2_packed.h`) are now built once in `Model::load` and shared read-only across all processors and 2x/4x
+  oversampling phases, reducing weight memory by 4x to 8x in stereo/oversampled setups and improving 2x/4x cache hit rates.
+- `Processor::prepare_swap` skips the redundant 6347-sample silence prewarm whenever sufficient input history is already recorded,
+  roughly halving swap preparation time on the control thread.
+
 ## [1.1.0] - 2026-11-23
 
 ### Added

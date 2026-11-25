@@ -16,6 +16,14 @@ public:
   // std::invalid_argument. May allocate.
   virtual void reset(int max_block) = 0;
 
+  // Same as reset(max_block), but allows skipping the silence prewarm when the caller is about to replay at least
+  // prewarm_samples() frames of real input history (e.g. prepare_swap).
+  virtual void reset(int max_block, bool prewarm)
+  {
+    (void)prewarm;
+    reset(max_block);
+  }
+
   // Mono, 1 <= n <= max_block, otherwise std::invalid_argument (also before the first reset()). `in` and
   // `out` may be the same buffer (in-place) but must not otherwise overlap. Must not allocate or block.
   virtual void process(const float* in, float* out, int n) = 0;

@@ -70,13 +70,11 @@ constexpr float kLeakySlope = 0.01f;
 using engine_util::AlignedFloats;
 using engine_util::next_pow2;
 
-struct Layer
+struct LayerState
 {
-  int K = 0, D = 0, lookback = 0, R = 0;
+  int R = 0;
   uint32_t mask = 0;
-  AlignedFloats W;    // K*64: [tap][in][out]
   AlignedFloats ring; // (R + M) columns of 8
-  float conv_b[8] = {}, mixin[8] = {}, l1x1[64] = {}, l1x1_b[8] = {};
 };
 
 // Write n columns from src at the ring position of logical index `pos`, then refresh the mirror.
@@ -105,7 +103,7 @@ constexpr int kConvTile = NAMTURBO_TWO_LEVEL ? 6 : 8;
 // One tile of T frames of the dilated convolution for one layer. H[k] points at tap k's contiguous
 // window; frame t reads H[k] + t*8. Bias and input mixer start the accumulator.
 template <int T, int K>
-inline void conv_tile(const Layer& L, const float* const* H, int t0, const float* in, float* Z, __m256 bias,
+inline void conv_tile(const PackedA2FullLayer& L, const float* const* H, int t0, const float* in, float* Z, __m256 bias,
                       __m256 mixin)
 {
   __m256 acc[T];
@@ -174,47 +172,70 @@ inline void head_tile(const __m256* hw, const float* const* Hh, int t0, float* Y
 
 using engine_util::ScopedNoDenormals;
 
+// True iff every float in in[0..n) has exact bit pattern +0.0f (0x00000000).
+inline bool is_all_pos_zero(const float* in, int n)
+{
+  int i = 0;
+  __m256i acc = _mm256_setzero_si256();
+  for (; i + 8 <= n; i += 8)
+    acc = _mm256_or_si256(acc, _mm256_loadu_si256(reinterpret_cast<const __m256i*>(in + i)));
+  if (!_mm256_testz_si256(acc, acc))
+    return false;
+  uint32_t tail = 0;
+  for (; i < n; ++i)
+  {
+    uint32_t bits = 0;
+    std::memcpy(&bits, in + i, sizeof(bits));
+    tail |= bits;
+  }
+  return tail == 0;
+}
+
+inline int trailing_pos_zeros(const float* in, int n)
+{
+  int z = 0;
+  for (int i = n - 1; i >= 0; --i)
+  {
+    uint32_t bits = 0;
+    std::memcpy(&bits, in + i, sizeof(bits));
+    if (bits != 0)
+      break;
+    ++z;
+  }
+  return z;
+}
+
 class A2Avx2 final : public A2Engine
 {
 public:
-  explicit A2Avx2(const A2Weights& w, uint32_t initial_position = 0) : initial_pos_(initial_position)
+  explicit A2Avx2(std::shared_ptr<const PackedA2Full> packed, uint32_t initial_position = 0)
+    : packed_(std::move(packed))
+    , initial_pos_(initial_position)
   {
-    if (w.channels != 8)
-      throw std::invalid_argument("make_a2_avx2: A2-Full (8 channels) only");
+    if (!packed_)
+      throw std::invalid_argument("make_a2_avx2: packed weights are null");
     if (!cpu_supports_avx2_fma())
       throw std::runtime_error("make_a2_avx2: this CPU or OS does not support AVX2+FMA");
-    std::copy(w.rechannel.begin(), w.rechannel.begin() + C, rechannel_);
-    for (int l = 0; l < kLayers; ++l)
-    {
-      const A2Layer& src = w.layers[l];
-      Layer& L = layers_[l];
-      L.K = src.k;
-      L.D = src.d;
-      L.lookback = (src.k - 1) * src.d;
-      L.W.assign_zero(size_t(src.k) * 64);
-      std::copy(src.conv.begin(), src.conv.end(), L.W.data());
-      std::copy(src.conv_b.begin(), src.conv_b.begin() + C, L.conv_b);
-      std::copy(src.mixin.begin(), src.mixin.begin() + C, L.mixin);
-      std::copy(src.l1x1.begin(), src.l1x1.end(), L.l1x1);
-      std::copy(src.l1x1_b.begin(), src.l1x1_b.begin() + C, L.l1x1_b);
-    }
-    for (int k = 0; k < kHeadK; ++k)
-      std::copy(w.head_w[k].begin(), w.head_w[k].begin() + C, head_w_[k]);
-    head_b_ = w.head_b;
-    head_scale_ = w.head_scale;
   }
 
-  void reset(int max_block) override
+  void reset(int max_block) override { reset(max_block, true); }
+
+  void reset(int max_block, bool prewarm) override
   {
     if (max_block < 1 || max_block > kMaxEngineBlock)
       throw std::invalid_argument("A2Avx2::reset: max_block must be in 1..kMaxEngineBlock");
     M_ = max_block;
     pos_ = initial_pos_;
-    for (Layer& L : layers_)
+    silent_count_ = 0;
+    idle_ready_ = false;
+    idle_output_ = 0.0f;
+    for (int l = 0; l < kLayers; ++l)
     {
-      L.R = next_pow2(L.lookback + M_);
-      L.mask = static_cast<uint32_t>(L.R - 1);
-      L.ring.assign_zero(size_t(L.R + M_) * C);
+      const PackedA2FullLayer& L = packed_->layers[l];
+      LayerState& S = states_[l];
+      S.R = next_pow2(L.lookback + M_);
+      S.mask = static_cast<uint32_t>(S.R - 1);
+      S.ring.assign_zero(size_t(S.R + M_) * C);
     }
     head_R_ = next_pow2(kHeadK - 1 + M_);
     head_mask_ = static_cast<uint32_t>(head_R_ - 1);
@@ -225,12 +246,15 @@ public:
     A_.assign_zero(size_t(M_) * C);
     Y_.assign_zero(size_t(M_));
 
-    std::vector<float> zeros(static_cast<size_t>(M_), 0.0f), sink(static_cast<size_t>(M_));
-    for (int left = a2_receptive_field(); left > 0;)
+    if (prewarm)
     {
-      const int n = std::min(left, M_);
-      process(zeros.data(), sink.data(), n);
-      left -= n;
+      std::vector<float> zeros(static_cast<size_t>(M_), 0.0f), sink(static_cast<size_t>(M_));
+      for (int left = a2_receptive_field(); left > 0;)
+      {
+        const int n = std::min(left, M_);
+        process(zeros.data(), sink.data(), n);
+        left -= n;
+      }
     }
   }
 
@@ -243,35 +267,50 @@ public:
 #ifdef NAMTURBO_PROFILE
     ++g_prof[kProfBlocks];
 #endif
+    const bool all_zero = is_all_pos_zero(in, n);
+    if (all_zero && idle_ready_)
+    {
+      std::fill(out, out + n, idle_output_);
+      return;
+    }
+    const int tz = all_zero ? n : trailing_pos_zeros(in, n);
+
+    const PackedA2Full& P = *packed_;
     float* X = X_.data();
-    const __m256 rechannel = _mm256_loadu_ps(rechannel_);
+    const __m256 rechannel = _mm256_loadu_ps(P.rechannel);
     {
       NAMTURBO_PROF(kProfInput);
       for (int t = 0; t < n; ++t)
         _mm256_storeu_ps(X + size_t(t) * C, _mm256_mul_ps(rechannel, _mm256_set1_ps(in[t])));
     }
     for (int l = 0; l < kLayers; ++l)
-      run_layer(layers_[l], in, n, /*first=*/l == 0, /*last=*/l == kLayers - 1);
-    run_head(out, n);
+      run_layer(P.layers[l], states_[l], in, n, /*first=*/l == 0, /*last=*/l == kLayers - 1);
+    run_head(P, out, n);
     pos_ += static_cast<uint32_t>(n);
+
+    constexpr int kRF = a2_receptive_field();
+    silent_count_ = all_zero ? std::min(silent_count_ + n, kRF) : std::min(tz, kRF);
+    idle_ready_ = (silent_count_ >= kRF);
+    if (idle_ready_)
+      idle_output_ = out[n - 1];
   }
 
   int prewarm_samples() const override { return a2_receptive_field(); }
 
 private:
-  void run_layer(const Layer& L, const float* in, int n, bool first, bool last)
+  void run_layer(const PackedA2FullLayer& L, LayerState& S, const float* in, int n, bool first, bool last)
   {
     float* X = X_.data();
     {
       NAMTURBO_PROF(kProfRing);
-      ring_write(const_cast<float*>(L.ring.data()), L.R, L.mask, M_, pos_, X, n);
+      ring_write(S.ring.data(), S.R, S.mask, M_, pos_, X, n);
     }
     {
       NAMTURBO_PROF(kProfConv);
       if (L.K == 6)
-        conv_block<6>(L, in, n);
+        conv_block<6>(L, S, in, n);
       else
-        conv_block<15>(L, in, n); // load_a2_weights guarantees kernel sizes of 6 or 15
+        conv_block<15>(L, S, in, n); // load_a2_weights guarantees kernel sizes of 6 or 15
     }
 
     layer_rest(L, n, first, last);
@@ -280,12 +319,12 @@ private:
   // Dilated convolution for a block (AVX2): the window for tap k starts at logical index pos_ - (K-1-k)*D.
   // K is a compile-time parameter so the tap loop has a constant trip count (whether it is unrolled depends on the compiler).
   template <int K>
-  void conv_block(const Layer& L, const float* in, int n)
+  void conv_block(const PackedA2FullLayer& L, const LayerState& S, const float* in, int n)
   {
     float* Z = Z_.data();
     const float* H[K];
     for (int k = 0; k < K; ++k)
-      H[k] = L.ring.data() + size_t((pos_ - uint32_t((K - 1 - k) * L.D)) & L.mask) * C;
+      H[k] = S.ring.data() + size_t((pos_ - uint32_t((K - 1 - k) * L.D)) & S.mask) * C;
     const __m256 bias = _mm256_loadu_ps(L.conv_b), mixin = _mm256_loadu_ps(L.mixin);
     int t = 0;
     for (; t + kConvTile <= n; t += kConvTile)
@@ -321,7 +360,7 @@ private:
   }
 
   // Activation, head accumulation, 1x1 and residual for a block whose convolution output is in Z_.
-  void layer_rest(const Layer& L, int n, bool first, bool last)
+  void layer_rest(const PackedA2FullLayer& L, int n, bool first, bool last)
   {
     const float* Z = Z_.data();
     float* A = A_.data();
@@ -364,7 +403,7 @@ private:
     }
   }
 
-  void run_head(float* out, int n)
+  void run_head(const PackedA2Full& P, float* out, int n)
   {
     NAMTURBO_PROF(kProfHead);
     ring_write(head_ring_.data(), head_R_, head_mask_, M_, pos_, HS_.data(), n);
@@ -373,7 +412,7 @@ private:
     for (int k = 0; k < kHeadK; ++k)
     {
       Hh[k] = head_ring_.data() + size_t((pos_ - uint32_t(kHeadK - 1 - k)) & head_mask_) * C;
-      hw[k] = _mm256_loadu_ps(head_w_[k]);
+      hw[k] = _mm256_loadu_ps(P.head_w[k]);
     }
     float* Y = Y_.data();
     int t = 0;
@@ -391,30 +430,36 @@ private:
       default: break;
     }
     for (int i = 0; i < n; ++i)
-      out[i] = head_scale_ * (Y[i] + head_b_);
+      out[i] = P.head_scale * (Y[i] + P.head_b);
   }
 
-  float rechannel_[8] = {};
-  Layer layers_[kLayers];
-  float head_w_[kHeadK][8] = {};
-  float head_b_ = 0.0f, head_scale_ = 0.0f;
+  std::shared_ptr<const PackedA2Full> packed_;
+  LayerState states_[kLayers];
 
   int M_ = 0;
   uint32_t initial_pos_ = 0;
   uint32_t pos_ = 0; // logical index of the first frame of the next block; wraps harmlessly (rings are powers of two)
+  int silent_count_ = 0;
+  bool idle_ready_ = false;
+  float idle_output_ = 0.0f;
   int head_R_ = 0;
   uint32_t head_mask_ = 0;
   AlignedFloats head_ring_, X_, Z_, HS_, A_, Y_;
 };
 } // namespace
 
+std::unique_ptr<A2Engine> make_a2_avx2_packed(std::shared_ptr<const PackedA2Full> packed, uint32_t initial_position)
+{
+  return std::make_unique<A2Avx2>(std::move(packed), initial_position);
+}
+
 std::unique_ptr<A2Engine> make_a2_avx2(const A2Weights& weights)
 {
-  return std::make_unique<A2Avx2>(weights);
+  return make_a2_avx2_packed(pack_a2_full(weights), 0);
 }
 
 std::unique_ptr<A2Engine> make_a2_avx2_at_position(const A2Weights& weights, uint32_t initial_position)
 {
-  return std::make_unique<A2Avx2>(weights, initial_position);
+  return make_a2_avx2_packed(pack_a2_full(weights), initial_position);
 }
 } // namespace namturbo

@@ -6,7 +6,7 @@ All names are in the namespace `namturbo`. Include everything with `#include "na
 |---|---|
 | `namturbo/error.h` | `ErrorCode`, `Error` |
 | `namturbo/cpu.h` | `CpuSupport`, `check_cpu` |
-| `namturbo/model.h` | `Variant`, `ModelInfo`, `Model` |
+| `namturbo/model.h` | `Variant`, `ModelInfo`, `Model`, `db_to_linear`, `linear_to_db`, `input_calibration_db`, `output_normalization_db`, `output_calibration_db` |
 | `namturbo/processor.h` | `ResamplerQuality`, `Oversampling`, `PerfStats`, `AdaptiveConfig`, `ProcessorConfig`, `SwapTicket`, `Processor` |
 | `namturbo/version.h` | `Version`, `kVersion`, `kPreRelease`, `version`, `version_string` |
 
@@ -118,6 +118,18 @@ Immutable after loading. All member functions can be called from any thread at t
 Both `load` functions check the file completely. They reject files larger than 64 MB, data that is not valid JSON, models of another
 architecture, wrong weight counts, and weights that are not finite numbers (including numbers too large for a 32-bit float). They
 never crash on damaged input; this is tested with generated damaged files (`tests/test_fuzz_loader.cpp`).
+
+### Gain-staging helpers
+
+Pure, allocation-free, `noexcept` functions in `namturbo/model.h`, safe to call from any thread:
+
+| Function | Meaning |
+|---|---|
+| `double db_to_linear(double db) noexcept` | `10^(db/20)`, or `0` if `db` is not finite. |
+| `double linear_to_db(double linear) noexcept` | `20*log10(linear)`, or `-infinity` if `linear <= 0` or not finite. |
+| `std::optional<double> input_calibration_db(const ModelInfo& info, double interface_input_dbu) noexcept` | `interface_input_dbu - *info.input_level_dbu`, or empty if absent or non-finite. |
+| `std::optional<double> output_normalization_db(const ModelInfo& info, double target_loudness_db = -18.0) noexcept` | `target_loudness_db - *info.loudness_db`, or empty if absent or non-finite. |
+| `std::optional<double> output_calibration_db(const ModelInfo& info, double interface_output_dbu) noexcept` | `*info.output_level_dbu - interface_output_dbu`, or empty if absent or non-finite. |
 
 ---
 

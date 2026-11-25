@@ -645,13 +645,42 @@ static void monitoring_of_the_processor()
   }
 }
 
+static void calibration_helpers()
+{
+  std::printf("calibration_helpers\n");
+  CHECK(std::fabs(db_to_linear(0.0) - 1.0) < 1e-12);
+  CHECK(std::fabs(db_to_linear(20.0) - 10.0) < 1e-12);
+  CHECK(std::fabs(db_to_linear(-6.020599913279624) - 0.5) < 1e-12);
+  CHECK(db_to_linear(std::nan("")) == 0.0);
+  CHECK(std::fabs(linear_to_db(1.0)) < 1e-12);
+  CHECK(std::fabs(linear_to_db(10.0) - 20.0) < 1e-12);
+  CHECK(std::isinf(linear_to_db(0.0)) && linear_to_db(0.0) < 0.0);
+  CHECK(std::isinf(linear_to_db(-1.0)) && linear_to_db(-1.0) < 0.0);
+
+  ModelInfo info;
+  CHECK(!input_calibration_db(info, 12.0).has_value());
+  CHECK(!output_normalization_db(info).has_value());
+  CHECK(!output_calibration_db(info, 12.0).has_value());
+
+  info.input_level_dbu = 12.0;
+  info.output_level_dbu = 12.0;
+  info.loudness_db = -26.5;
+  CHECK(std::fabs(*input_calibration_db(info, 18.0) - 6.0) < 1e-12);
+  CHECK(std::fabs(*output_calibration_db(info, 18.0) - (-6.0)) < 1e-12);
+  CHECK(std::fabs(*output_normalization_db(info) - 8.5) < 1e-12);
+  CHECK(std::fabs(*output_normalization_db(info, -14.0) - 12.5) < 1e-12);
+  CHECK(!input_calibration_db(info, std::nan("")).has_value());
+  CHECK(!output_normalization_db(info, std::numeric_limits<double>::infinity()).has_value());
+  CHECK(!output_calibration_db(info, std::nan("")).has_value());
+}
+
 static void cpu_and_version()
 {
   std::printf("cpu_and_version\n");
   const CpuSupport c = check_cpu();
   CHECK(c.supported && c.detail.empty());
-  CHECK(std::string(version_string()) == "1.1.0");
-  CHECK(version().major == 1 && version().minor == 1 && version().patch == 0);
+  CHECK(std::string(version_string()) == "1.2.0");
+  CHECK(version().major == 1 && version().minor == 2 && version().patch == 0);
   CHECK(std::string(kPreRelease).empty());
 }
 
@@ -698,6 +727,7 @@ int main(int argc, char** argv)
   guarded("processor_at_other_sample_rates", processor_at_other_sample_rates);
   guarded("converted_rate_agrees_with_the_direct_path", converted_rate_agrees_with_the_direct_path);
   guarded("monitoring_of_the_processor", monitoring_of_the_processor);
+  guarded("calibration_helpers", calibration_helpers);
   guarded("cpu_and_version", cpu_and_version);
   std::printf(g_failures ? "FAILED: %d check(s)\n" : "ALL PASSED\n", g_failures);
   return g_failures ? 1 : 0;

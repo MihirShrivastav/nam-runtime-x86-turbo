@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "a2_avx2.h"
 #include "a2_dispatch.h"
 #include "a2_engine.h"
 #include "model_impl.h"
@@ -408,13 +409,14 @@ Processor::~Processor() = default;
 
 namespace
 {
-// An engine for the weights of `variant`, ready to run blocks of up to `engine_block` samples.
-std::unique_ptr<A2Engine> make_engine(const A2Weights& weights, int engine_block)
+// An engine sharing immutable prepacked weights for `variant`, ready to run blocks of up to `engine_block` samples.
+std::unique_ptr<A2Engine> make_engine(const std::shared_ptr<const PackedA2Full>& full, const std::shared_ptr<const PackedA2Lite>& lite,
+                                      Variant variant, int engine_block, bool prewarm = true)
 {
   try
   {
-    std::unique_ptr<A2Engine> engine = make_a2_engine(weights, Backend::Avx2);
-    engine->reset(engine_block);
+    std::unique_ptr<A2Engine> engine = (variant == Variant::Full) ? make_a2_avx2_packed(full) : make_a2_lite_avx2_packed(lite);
+    engine->reset(engine_block, prewarm);
     return engine;
   }
   catch (const std::invalid_argument& e)
@@ -445,14 +447,13 @@ void validate_adaptive(const AdaptiveConfig& c)
 
 // How much more A2-Full costs than A2-Lite per sample, measured now on this machine with throw-away engines (a few milliseconds);
 // 0 if the model lacks one of the variants.
-double measure_cost_ratio(const A2Weights* full_weights, const A2Weights* lite_weights)
+double measure_cost_ratio(const std::shared_ptr<const PackedA2Full>& full_weights, const std::shared_ptr<const PackedA2Lite>& lite_weights)
 {
   if (!full_weights || !lite_weights)
     return 0.0;
   try
   {
-    auto time_engine = [](const A2Weights& weights) {
-      std::unique_ptr<A2Engine> engine = make_a2_engine(weights, Backend::Avx2);
+    auto time_engine = [](std::unique_ptr<A2Engine> engine) {
       engine->reset(64);
       std::vector<float> in(64), out(64);
       for (int i = 0; i < 64; ++i)
@@ -467,7 +468,7 @@ double measure_cost_ratio(const A2Weights* full_weights, const A2Weights* lite_w
       }
       return best;
     };
-    const double full = time_engine(*full_weights), lite = time_engine(*lite_weights);
+    const double full = time_engine(make_a2_avx2_packed(full_weights)), lite = time_engine(make_a2_lite_avx2_packed(lite_weights));
     return lite > 0.0 ? full / lite : 0.0;
   }
   catch (const std::exception&)
@@ -500,7 +501,6 @@ void Processor::prepare(const ProcessorConfig& config)
     throw Error(ErrorCode::Unsupported, "the sample rate of the model is not a whole number of Hz");
 
   const Variant variant = usable_variant(*impl_->model, config.variant);
-  const A2Weights& weights = (variant == Variant::Full) ? *m.full : *m.lite;
 
   // Everything that can fail is done before the state of the processor changes: if prepare() throws, the processor is as it was.
   std::unique_ptr<RateConverter> converter;
@@ -517,7 +517,7 @@ void Processor::prepare(const ProcessorConfig& config)
   slot->variant = variant;
   slot->num_engines = os_factor;
   for (int i = 0; i < os_factor; ++i)
-    slot->engines[static_cast<std::size_t>(i)] = make_engine(weights, engine_block);
+    slot->engines[static_cast<std::size_t>(i)] = make_engine(m.packed_full, m.packed_lite, variant, engine_block);
 
   const int fade_len = static_cast<int>(std::lround(config.swap_fade_ms * 1e-3 * model_hz));
   std::vector<float> fade_table(static_cast<std::size_t>(fade_len));
@@ -542,7 +542,7 @@ void Processor::prepare(const ProcessorConfig& config)
     for (auto& h : history[static_cast<std::size_t>(i)])
       h.store(0.0f, std::memory_order_relaxed);
   }
-  const double cost_ratio = config.adaptive.enabled ? measure_cost_ratio(m.full ? &*m.full : nullptr, m.lite ? &*m.lite : nullptr) : 0.0;
+  const double cost_ratio = config.adaptive.enabled ? measure_cost_ratio(m.packed_full, m.packed_lite) : 0.0;
 
   const int rc_lat = converter ? converter->latency_samples() : 0;
   const int os_lat_model = oversampler ? oversampler->latency_samples() : 0;
@@ -703,13 +703,14 @@ SwapTicket Processor::Impl::make_ticket(std::shared_ptr<const Model> target, Var
   const int phases = p.os_factor;
   const Variant use = usable_variant(*target, wanted);
   const Model::Impl& m = *target->impl_;
-  const A2Weights& weights = (use == Variant::Full) ? *m.full : *m.lite;
+  // If enough real history already exists to fill the entire receptive field, skip the redundant silence prewarm.
+  const bool need_prewarm = p.history_pos.load(std::memory_order_acquire) < static_cast<std::uint64_t>(a2_receptive_field());
   auto slot = std::make_unique<Slot>();
   slot->model = target;
   slot->variant = use;
   slot->num_engines = phases;
   for (int i = 0; i < phases; ++i)
-    slot->engines[static_cast<std::size_t>(i)] = make_engine(weights, p.engine_block);
+    slot->engines[static_cast<std::size_t>(i)] = make_engine(m.packed_full, m.packed_lite, use, p.engine_block, need_prewarm);
   slot->generation = made_for;
   slot->owner = this;
 
@@ -867,7 +868,7 @@ void Processor::set_adaptive(const AdaptiveConfig& config)
   if (config.enabled)
   {
     const Model::Impl& m = *p.control_model->impl_;
-    p.cost_ratio = measure_cost_ratio(m.full ? &*m.full : nullptr, m.lite ? &*m.lite : nullptr);
+    p.cost_ratio = measure_cost_ratio(m.packed_full, m.packed_lite);
   }
   p.adaptive = config;
   p.ema_tau_ns.store(config.smoothing_ms * 1e6, std::memory_order_relaxed);

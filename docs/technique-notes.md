@@ -69,12 +69,18 @@ The last register of a block may be partly empty. Its unused lanes compute value
 only positions at or before its own); only valid values are stored. Every lane executes the same arithmetic regardless of its position, so
 the output is independent of the block size.
 
-## 4. Denormal numbers
+## 4. Denormals, idle silence and shared weights
 
-Denormal floating-point numbers can cost more than a hundred cycles per operation on some processors, and a decaying signal or silence can
-produce them inside the network. During `process` the engines set the flush-to-zero and denormals-are-zero bits (`ScopedNoDenormals` in
-`engine_util.h`) and restore the previous state on return, so the floating-point state of the host is unchanged. The block time does not
-depend on the signal.
+- **Denormals and idle silence.** FTZ and DAZ are set during `process` and the previous state is restored on return (`ScopedNoDenormals`
+  in `engine_util.h`), so active block time does not depend on the signal. Because the network has a fixed finite receptive field of 6347
+  samples and deterministic arithmetic, after 6347 consecutive exact `+0.0f` samples the steady-state output is constant; subsequent
+  all-zero blocks fill the output with that constant without running the network or advancing the ring position, preserving bit-exactness
+  on wake-up.
+- **Shared prepacked weights (`a2_packed.h`).** `Model::load` prepacks the weights once into an immutable `PackedA2Full` / `PackedA2Lite`
+  object shared across all processors and oversampling phases (`std::shared_ptr<const ...>`). Each engine owns only its mutable history
+  rings and scratch buffers.
+- **Swap prewarm.** When `prepare_swap` has at least 6347 samples of recorded input history, the new engine skips the initial silence
+  prewarm (`reset(max_block, false)`) and replays the recorded history directly, roughly halving swap preparation time.
 
 ## 5. Sample-rate conversion and oversampling (`resampler.cpp`)
 
