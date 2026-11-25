@@ -74,7 +74,6 @@ using engine_util::next_pow2;
 using engine_util::ScopedNoDenormals;
 
 constexpr int C = 3;
-constexpr int kMaxTaps = 15;
 constexpr float kLeakySlope = 0.01f;
 
 struct LayerState
